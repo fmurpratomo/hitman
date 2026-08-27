@@ -1,3 +1,7 @@
+{% set note = note if note is defined else None %}
+{% if note %}
+<p class="warnings">{{ note }}</p>
+{% endif %}
 {% if response.error %}
 <div class="status-line error">
   <span class="badge err">Failed</span>

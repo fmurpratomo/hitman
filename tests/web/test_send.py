@@ -52,3 +52,16 @@ def test_post_with_json_body(client, base_form, fixture_server):
         body_type="json", body='{"a": 1}',
     )
     assert "application/json" in reply.text
+
+
+def test_a_failed_history_write_still_returns_the_response(client, app, base_form, fixture_server):
+    """The request already went out; bookkeeping must not cost the payload."""
+    def explode(*args, **kwargs):
+        raise RuntimeError("disk gone")
+
+    app.state.store.add_history = explode
+    reply = send(client, base_form, url=f"{fixture_server}/json")
+    assert reply.status_code == 200
+    assert "200" in reply.text
+    assert "hello" in reply.text
+    assert "not saved to history" in reply.text

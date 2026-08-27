@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException
 from fastapi import Request as HttpRequest
@@ -16,6 +17,7 @@ from hitman.core.engines.httpx_engine import HttpxEngine
 from hitman.core.models import Request, Response
 from hitman.web.forms import request_from_form
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -62,17 +64,31 @@ async def send(http_request: HttpRequest):
     outgoing = request_from_form(form)
     engine = _engine(str(form.get("engine") or "httpx"))
 
+    note = None
+
     if not outgoing.url:
         response = Response(engine=engine.name, error="Enter a URL first.")
     else:
         # engine.send blocks on the network; keep the event loop free.
         response = await run_in_threadpool(engine.send, outgoing)
-        http_request.app.state.store.add_history(outgoing, response)
+        try:
+            http_request.app.state.store.add_history(outgoing, response)
+        except Exception as exc:  # noqa: BLE001 - history is strictly secondary
+            # The request already went out and came back. Losing the history
+            # row must not cost the user the response they were waiting for,
+            # so this degrades to a visible note instead of a 500.
+            log.warning("Could not write history: %s", exc)
+            note = f"Response not saved to history: {exc}"
 
     return render(
         http_request,
         "fragments/response_with_sidebar.html",
-        {"req": outgoing, "response": response, "pretty": pretty_body(response)},
+        {
+            "req": outgoing,
+            "response": response,
+            "pretty": pretty_body(response),
+            "note": note,
+        },
     )
 
 
