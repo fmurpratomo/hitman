@@ -1,3 +1,4 @@
+{% set current = current if current is defined else None %}
 {% from "fragments/_macros.html" import kv_table %}
 {% if warnings %}
 <ul class="warnings">
@@ -65,8 +66,19 @@
   </div>
 
   <div class="save-row">
-    <input type="text" id="save-name" name="save_name" placeholder="Name this request" autocomplete="off">
+    <input type="text" id="save-name" name="save_name" placeholder="Name this request"
+           value="{{ current.name if current else '' }}" autocomplete="off">
+    <input type="text" id="save-folder" name="save_folder" list="folder-list"
+           placeholder="Folder (optional)"
+           value="{{ current.folder if current else '' }}" autocomplete="off">
+    <datalist id="folder-list">
+      {% for name in folders %}<option value="{{ name }}"></option>{% endfor %}
+    </datalist>
+    {% if current %}
+    <button type="button" class="primary" data-action="put" data-url="/requests/{{ current.id }}"
+            data-form="#request-form" data-target="#sidebar">Update</button>
+    {% endif %}
     <button type="button" id="save-request" data-action="post" data-url="/requests"
-            data-form="#request-form" data-target="#sidebar">Save</button>
+            data-form="#request-form" data-target="#sidebar">Save as new</button>
   </div>
 </form>

@@ -24,6 +24,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS saved_requests (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   name         TEXT NOT NULL,
+  folder       TEXT NOT NULL DEFAULT '',
   request_json TEXT NOT NULL,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS history (
 class SavedRequest:
     id: int
     name: str
+    folder: str
     request: Request
     created_at: str
     updated_at: str
@@ -109,7 +111,23 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring an existing database up to the current schema.
+
+        CREATE TABLE IF NOT EXISTS is a no-op on a table that already exists,
+        so a column added after someone started using the app has to be
+        applied here or their saved requests break on read.
+        """
+        columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(saved_requests)")
+        }
+        if "folder" not in columns:
+            self._conn.execute(
+                "ALTER TABLE saved_requests ADD COLUMN folder TEXT NOT NULL DEFAULT ''"
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -117,25 +135,62 @@ class Store:
 
     # --- saved requests -------------------------------------------------
 
-    def save_request(self, name: str, request: Request) -> int:
+    def save_request(self, name: str, request: Request, folder: str = "") -> int:
         payload = json.dumps(normalize(request).to_dict())
         stamp = _now()
         with self._lock:
             cursor = self._conn.execute(
-                "INSERT INTO saved_requests (name, request_json, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?)",
-                (name, payload, stamp, stamp),
+                "INSERT INTO saved_requests (name, folder, request_json, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (name, folder.strip(), payload, stamp, stamp),
             )
             self._conn.commit()
             return int(cursor.lastrowid)
 
-    def update_request(self, request_id: int, name: str, request: Request) -> None:
+    def update_request(
+        self, request_id: int, name: str, request: Request, folder: str = ""
+    ) -> None:
         with self._lock:
             self._conn.execute(
-                "UPDATE saved_requests SET name = ?, request_json = ?, updated_at = ? WHERE id = ?",
-                (name, json.dumps(normalize(request).to_dict()), _now(), request_id),
+                "UPDATE saved_requests SET name = ?, folder = ?, request_json = ?,"
+                " updated_at = ? WHERE id = ?",
+                (
+                    name,
+                    folder.strip(),
+                    json.dumps(normalize(request).to_dict()),
+                    _now(),
+                    request_id,
+                ),
             )
             self._conn.commit()
+
+    def duplicate_request(self, request_id: int) -> int | None:
+        """Copy a saved request, into the same folder, under a free name."""
+        original = self.get_request(request_id)
+        if original is None:
+            return None
+        taken = {item.name for item in self.list_requests() if item.folder == original.folder}
+        name = f"{original.name} (copy)"
+        suffix = 2
+        while name in taken:
+            name = f"{original.name} (copy {suffix})"
+            suffix += 1
+        return self.save_request(name, original.request, original.folder)
+
+    def list_folders(self) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT folder FROM saved_requests WHERE folder <> ''"
+                " ORDER BY folder"
+            ).fetchall()
+        return [row["folder"] for row in rows]
+
+    def grouped_requests(self) -> list[tuple[str, list[SavedRequest]]]:
+        """Saved requests as (folder, items), folders first and unfiled last."""
+        groups: dict[str, list[SavedRequest]] = {}
+        for item in self.list_requests():
+            groups.setdefault(item.folder, []).append(item)
+        return sorted(groups.items(), key=lambda pair: (pair[0] == "", pair[0]))
 
     def get_request(self, request_id: int) -> SavedRequest | None:
         with self._lock:
@@ -146,7 +201,11 @@ class Store:
 
     def list_requests(self) -> list[SavedRequest]:
         with self._lock:
-            rows = self._conn.execute("SELECT * FROM saved_requests ORDER BY id DESC").fetchall()
+            rows = self._conn.execute(
+                # Folders first, then unfiled; alphabetical within each.
+                "SELECT * FROM saved_requests"
+                " ORDER BY (folder = '') ASC, folder ASC, name ASC"
+            ).fetchall()
         return [_row_to_saved(row) for row in rows]
 
     def delete_request(self, request_id: int) -> None:
@@ -291,6 +350,7 @@ def _row_to_saved(row: sqlite3.Row) -> SavedRequest:
     return SavedRequest(
         id=row["id"],
         name=row["name"],
+        folder=row["folder"],
         request=Request.from_dict(json.loads(row["request_json"])),
         created_at=row["created_at"],
         updated_at=row["updated_at"],

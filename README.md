@@ -42,6 +42,16 @@ different database file, and `--no-browser` to stay in the terminal.
   returns `<script>` cannot execute anything in the app.
 - No third-party JavaScript. The front end is one 160-line `app.js`.
 
+## Saved requests
+
+Give a request a name and, optionally, a folder — the folder box autocompletes
+from the folders you already have, and typing a new name creates it. Folders
+are a single flat level, which is what an API client of this size needs.
+
+Loading a saved request fills the builder and offers **Update** (rename, move
+folder, or overwrite with the current request) alongside **Save as new**. The
+duplicate button copies a request into the same folder as `… (copy)`.
+
 ## Environments
 
 Variables are resolved just before the request is sent, so:

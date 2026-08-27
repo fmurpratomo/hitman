@@ -12,19 +12,51 @@
 // A reply may contain <div data-oob="#selector">...</div> elements; their
 // contents go to that selector and the rest goes to data-target.
 
+function selectTab(bar, name) {
+  bar.querySelectorAll('button[data-tab]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.tab === name);
+  });
+  bar.parentElement.querySelectorAll(':scope > [data-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.panel !== name;
+  });
+}
+
+// A fragment always arrives with its default tab selected, so a swap would
+// otherwise throw you back to History every time you duplicate, delete or save
+// something while working in Saved. Remember the choice and put it back.
+function captureTabs(root) {
+  const state = {};
+  root.querySelectorAll('[data-tabs]').forEach((bar) => {
+    const active = bar.querySelector('button.active');
+    if (active) state[bar.dataset.tabs] = active.dataset.tab;
+  });
+  return state;
+}
+
+function swapInto(destination, html) {
+  const tabs = captureTabs(destination);
+  destination.innerHTML = html;
+  destination.querySelectorAll('[data-tabs]').forEach((bar) => {
+    const wanted = tabs[bar.dataset.tabs];
+    if (wanted && bar.querySelector(`button[data-tab="${wanted}"]`)) {
+      selectTab(bar, wanted);
+    }
+  });
+}
+
 function swap(html, targetSelector) {
   const holder = document.createElement('div');
   holder.innerHTML = html;
 
   holder.querySelectorAll('[data-oob]').forEach((piece) => {
     const destination = document.querySelector(piece.dataset.oob);
-    if (destination) destination.innerHTML = piece.innerHTML;
+    if (destination) swapInto(destination, piece.innerHTML);
     piece.remove();
   });
 
   if (targetSelector) {
     const target = document.querySelector(targetSelector);
-    if (target) target.innerHTML = holder.innerHTML;
+    if (target) swapInto(target, holder.innerHTML);
   }
 }
 
@@ -107,13 +139,7 @@ document.addEventListener('click', (event) => {
   }
 
   if (target.dataset.tab) {
-    const bar = target.closest('.tabs');
-    bar.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
-    target.classList.add('active');
-    const scope = bar.parentElement;
-    scope.querySelectorAll(':scope > [data-panel]').forEach((panel) => {
-      panel.hidden = panel.dataset.panel !== target.dataset.tab;
-    });
+    selectTab(target.closest('.tabs'), target.dataset.tab);
     return;
   }
 

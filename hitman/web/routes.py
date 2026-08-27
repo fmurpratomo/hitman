@@ -26,7 +26,8 @@ def render(http_request: HttpRequest, template: str, context: dict) -> HTMLRespo
     store = http_request.app.state.store
     full = {
         "curl_available": http_request.app.state.curl_available,
-        "saved": store.list_requests(),
+        "saved_groups": store.grouped_requests(),
+        "folders": store.list_folders(),
         "history": store.list_history(50),
         "environments": store.list_environments(),
         "active_env": store.active_environment(),
@@ -150,7 +151,8 @@ async def save_request(http_request: HttpRequest):
     form = await http_request.form()
     outgoing = request_from_form(form)
     name = str(form.get("save_name") or "").strip() or outgoing.url or "Untitled"
-    http_request.app.state.store.save_request(name, outgoing)
+    folder = str(form.get("save_folder") or "")
+    http_request.app.state.store.save_request(name, outgoing, folder)
     return render(http_request, "fragments/sidebar.html", {"req": outgoing})
 
 
@@ -159,7 +161,11 @@ def load_request(request_id: int, http_request: HttpRequest):
     saved = http_request.app.state.store.get_request(request_id)
     if saved is None:
         raise HTTPException(status_code=404, detail="Saved request not found")
-    return render(http_request, "fragments/builder.html", {"req": saved.request, "warnings": []})
+    return render(
+        http_request,
+        "fragments/builder.html",
+        {"req": saved.request, "warnings": [], "current": saved},
+    )
 
 
 @router.put("/requests/{request_id}", response_class=HTMLResponse)
@@ -170,8 +176,16 @@ async def update_request(request_id: int, http_request: HttpRequest):
     form = await http_request.form()
     outgoing = request_from_form(form)
     name = str(form.get("save_name") or "").strip() or outgoing.url or "Untitled"
-    store.update_request(request_id, name, outgoing)
+    folder = str(form.get("save_folder") or "")
+    store.update_request(request_id, name, outgoing, folder)
     return render(http_request, "fragments/sidebar.html", {"req": outgoing})
+
+
+@router.post("/requests/{request_id}/duplicate", response_class=HTMLResponse)
+def duplicate_request(request_id: int, http_request: HttpRequest):
+    if http_request.app.state.store.duplicate_request(request_id) is None:
+        raise HTTPException(status_code=404, detail="Saved request not found")
+    return render(http_request, "fragments/sidebar.html", {"req": Request()})
 
 
 @router.delete("/requests/{request_id}", response_class=HTMLResponse)

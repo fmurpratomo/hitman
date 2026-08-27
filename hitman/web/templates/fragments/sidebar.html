@@ -24,16 +24,31 @@
   {% endif %}
 </div>
 
+{% macro saved_row(item) %}
+<div class="entry-row">
+  <button type="button" class="entry" data-action="get" data-url="/requests/{{ item.id }}" data-target="#builder">
+    <span class="verb">{{ item.request.method }}</span>
+    <span class="name">{{ item.name }}</span>
+  </button>
+  <button type="button" class="icon" data-action="post" data-url="/requests/{{ item.id }}/duplicate"
+          data-target="#sidebar" title="Duplicate {{ item.name }}"
+          aria-label="Duplicate {{ item.name }}">&#10697;</button>
+  <button type="button" class="icon delete" data-action="delete" data-url="/requests/{{ item.id }}"
+          data-target="#sidebar" data-confirm="Delete {{ item.name }}?"
+          title="Delete {{ item.name }}" aria-label="Delete {{ item.name }}">&times;</button>
+</div>
+{% endmacro %}
+
 <div data-panel="saved" class="panel list" hidden>
-  {% for item in saved %}
-  <div class="entry-row">
-    <button type="button" class="entry" data-action="get" data-url="/requests/{{ item.id }}" data-target="#builder">
-      <span class="verb">{{ item.request.method }}</span>
-      <span class="name">{{ item.name }}</span>
-    </button>
-    <button type="button" class="delete" data-action="delete" data-url="/requests/{{ item.id }}"
-            data-target="#sidebar" aria-label="Delete {{ item.name }}">&times;</button>
-  </div>
+  {% for folder, items in saved_groups %}
+    {% if folder %}
+    <details class="folder" open>
+      <summary>{{ folder }} <span class="muted">{{ items | length }}</span></summary>
+      {% for item in items %}{{ saved_row(item) }}{% endfor %}
+    </details>
+    {% else %}
+      {% for item in items %}{{ saved_row(item) }}{% endfor %}
+    {% endif %}
   {% else %}
   <p class="empty">No saved requests.</p>
   {% endfor %}

@@ -80,3 +80,15 @@ dialog menu { display: flex; gap: 8px; justify-content: flex-end; padding: 0; }
 #env-dialog input[name="env_name"] { width: 100%; margin-bottom: 4px; }
 #env-dialog menu { margin-top: 12px; }
 code { background: var(--line); padding: 1px 5px; border-radius: 4px; }
+.save-row input { flex: 1; }
+.save-row #save-folder { max-width: 180px; }
+.folder { margin-bottom: 4px; }
+.folder > summary { cursor: pointer; padding: 5px 6px; border-radius: 6px;
+  color: var(--text); font-weight: 600; font-size: 12px; letter-spacing: .02em; }
+.folder > summary:hover { background: var(--panel); }
+.folder > summary .muted { font-weight: 400; }
+.folder .entry-row { padding-left: 12px; }
+.entry-row .icon { background: none; border: none; color: var(--muted);
+  padding: 6px 6px; line-height: 1; }
+.entry-row .icon:hover { color: var(--text); }
+.entry-row .icon.delete:hover { color: var(--err); }

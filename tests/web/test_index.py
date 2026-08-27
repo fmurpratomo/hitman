@@ -84,3 +84,19 @@ def test_explicit_zero_still_turns_them_off():
     parsed = request_from_form(_MultiForm({"verify_tls": "0", "follow_redirects": "0"}))
     assert parsed.verify_tls is False
     assert parsed.follow_redirects is False
+
+
+def test_static_assets_are_revalidated_not_heuristically_cached(client):
+    """Without this the browser can keep running a stale app.js after an update.
+
+    Starlette sends ETag/Last-Modified but no Cache-Control, and browsers then
+    guess a freshness lifetime. This was not hypothetical: a JS fix appeared to
+    have no effect because the page was still running the cached old file.
+    """
+    reply = client.get("/static/app.js")
+    assert reply.status_code == 200
+    assert reply.headers.get("cache-control") == "no-cache"
+
+
+def test_page_responses_are_not_given_that_header(client):
+    assert client.get("/").headers.get("cache-control") != "no-cache"

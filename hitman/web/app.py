@@ -31,6 +31,21 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.state.curl_available = curl_available()
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
+    @app.middleware("http")
+    async def revalidate_static(request, call_next):
+        """Stop the browser serving a stale app.js after an update.
+
+        Starlette's StaticFiles sends ETag and Last-Modified but no
+        Cache-Control, and with no explicit directive browsers fall back to
+        heuristic freshness — so a changed script can keep running from cache
+        long after the app was updated. "no-cache" means revalidate, not
+        "do not store": the ETag still yields a cheap 304.
+        """
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     from hitman.web import routes  # imported here to avoid a circular import
 
     app.include_router(routes.router)

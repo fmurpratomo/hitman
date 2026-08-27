@@ -36,10 +36,13 @@ def test_get_request_returns_none_for_unknown_id(store):
     assert store.get_request(9999) is None
 
 
-def test_list_requests_is_newest_first(store):
-    store.save_request("first", make_request())
-    store.save_request("second", make_request())
-    assert [item.name for item in store.list_requests()] == ["second", "first"]
+def test_list_requests_is_alphabetical(store):
+    """Ordering changed when folders arrived: name order beats insertion order,
+    because a list you have organised into folders has to stay navigable.
+    History is unaffected and stays newest-first."""
+    store.save_request("zebra", make_request())
+    store.save_request("alpha", make_request())
+    assert [item.name for item in store.list_requests()] == ["alpha", "zebra"]
 
 
 def test_update_request_changes_name_and_payload(store):
@@ -190,3 +193,109 @@ def test_deleting_a_different_environment_leaves_the_pointer(store):
     store.set_active_environment(keep)
     store.delete_environment(other)
     assert store.active_environment().id == keep
+
+
+# --- folders and duplication --------------------------------------------
+
+
+def test_a_saved_request_defaults_to_no_folder(store):
+    saved_id = store.save_request("x", make_request())
+    assert store.get_request(saved_id).folder == ""
+
+
+def test_a_request_can_be_saved_into_a_folder(store):
+    saved_id = store.save_request("x", make_request(), folder="Users")
+    assert store.get_request(saved_id).folder == "Users"
+
+
+def test_folder_names_are_trimmed(store):
+    saved_id = store.save_request("x", make_request(), folder="  Users  ")
+    assert store.get_request(saved_id).folder == "Users"
+
+
+def test_list_folders_is_distinct_and_sorted_and_skips_unfiled(store):
+    store.save_request("a", make_request(), folder="Users")
+    store.save_request("b", make_request(), folder="Auth")
+    store.save_request("c", make_request(), folder="Users")
+    store.save_request("d", make_request())
+    assert store.list_folders() == ["Auth", "Users"]
+
+
+def test_grouped_puts_folders_first_and_unfiled_last(store):
+    store.save_request("loose", make_request())
+    store.save_request("filed", make_request(), folder="Users")
+    assert [folder for folder, _ in store.grouped_requests()] == ["Users", ""]
+
+
+def test_grouped_sorts_items_by_name_within_a_folder(store):
+    store.save_request("zebra", make_request(), folder="Users")
+    store.save_request("alpha", make_request(), folder="Users")
+    _, items = store.grouped_requests()[0]
+    assert [i.name for i in items] == ["alpha", "zebra"]
+
+
+def test_update_can_move_a_request_between_folders(store):
+    saved_id = store.save_request("x", make_request(), folder="Users")
+    store.update_request(saved_id, "x", make_request(), folder="Auth")
+    assert store.get_request(saved_id).folder == "Auth"
+
+
+def test_duplicate_copies_the_request_and_the_folder(store):
+    original = store.save_request("Get users", make_request(), folder="Users")
+    copy_id = store.duplicate_request(original)
+    copy = store.get_request(copy_id)
+    assert copy.name == "Get users (copy)"
+    assert copy.folder == "Users"
+    assert copy.request == store.get_request(original).request
+
+
+def test_duplicating_twice_does_not_collide(store):
+    original = store.save_request("Get users", make_request())
+    store.duplicate_request(original)
+    second = store.duplicate_request(original)
+    assert store.get_request(second).name == "Get users (copy 2)"
+
+
+def test_duplicate_names_only_collide_within_a_folder(store):
+    store.save_request("Get users (copy)", make_request(), folder="Other")
+    original = store.save_request("Get users", make_request(), folder="Users")
+    copy_id = store.duplicate_request(original)
+    assert store.get_request(copy_id).name == "Get users (copy)"
+
+
+def test_duplicating_something_that_does_not_exist_returns_none(store):
+    assert store.duplicate_request(9999) is None
+
+
+def test_a_database_without_the_folder_column_is_migrated(tmp_path):
+    """Someone already using the app must not lose their saved requests."""
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(
+        """
+        CREATE TABLE saved_requests (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          request_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        """
+    )
+    old.execute(
+        "INSERT INTO saved_requests (name, request_json, created_at, updated_at)"
+        " VALUES ('legacy', '{\"url\": \"http://x.test/\"}', 'then', 'then')"
+    )
+    old.commit()
+    old.close()
+
+    store = Store(path)
+    try:
+        item = store.list_requests()[0]
+        assert item.name == "legacy"
+        assert item.folder == ""
+        assert item.request.url == "http://x.test/"
+    finally:
+        store.close()
