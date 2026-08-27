@@ -113,7 +113,11 @@ def parse_curl(text: str) -> ParsedCurl:
     if stream.tokens[0] == "curl":
         stream.index = 1
 
-    request = Request()
+    # curl does not follow redirects unless -L is given, so an imported
+    # command must start from False even though a request built in the UI
+    # defaults to True. Without this, follow_redirects=False does not
+    # survive an export/import round trip.
+    request = Request(follow_redirects=False)
     warnings: list[str] = []
     bare_tokens: list[str] = []
     data_parts: list[str] = []
