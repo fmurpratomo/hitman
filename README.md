@@ -42,10 +42,27 @@ different database file, and `--no-browser` to stay in the terminal.
   returns `<script>` cannot execute anything in the app.
 - No third-party JavaScript. The front end is one 160-line `app.js`.
 
+## Environments
+
+Variables are resolved just before the request is sent, so:
+
+- **Saved requests keep the template.** A request saved as
+  `{{base_url}}/users` works against every environment.
+- **History records what was actually sent.** You are looking at a log of real
+  requests, not of intentions.
+- **"Copy as curl" resolves too** — a curl command containing `{{base_url}}`
+  is not something you can paste into a terminal.
+- **An unset variable is left in place**, not blanked, and the response pane
+  names it. Sending to `{{base_url}}/users` fails in an obvious way; sending
+  to `/users` fails in a baffling one.
+- Substitution is a **single pass** — a variable's value is never rescanned,
+  so cycles are impossible.
+
+Environment values live in the same database as your headers, in plain text.
+
 ## Not supported yet
 
-Environments and `{{variable}}` substitution, auth helper forms, Postman
-collection import/export, multipart file upload.
+Auth helper forms, Postman collection import/export, multipart file upload.
 
 ## Development
 

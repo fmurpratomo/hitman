@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import socket
+import sys
 import threading
 import webbrowser
+from pathlib import Path
 
 import uvicorn
 
@@ -41,7 +43,7 @@ def port_is_free(port: int, host: str = HOST) -> bool:
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    args = build_parser().parse_args(sys.argv[1:])
     url = f"http://{HOST}:{args.port}"
 
     # Checked before create_app so a doomed start does not create a database
@@ -56,6 +58,7 @@ def main() -> None:
 
     app = create_app(args.db)
     print(f"Hitman is running at {url} (loopback only — press Ctrl+C to stop)", flush=True)
+    print(f"Data:  {Path(app.state.store.path).resolve()}", flush=True)
     if not args.no_browser:
         # Give uvicorn a moment to bind before the browser asks for the page.
         threading.Timer(1.0, webbrowser.open, [url]).start()

@@ -45,3 +45,20 @@ def test_port_is_free_reports_false_when_something_is_listening():
         assert port_is_free(holder.getsockname()[1]) is False
     finally:
         holder.close()
+
+
+def test_startup_reports_the_resolved_database_path(tmp_path, capsys, monkeypatch, closed_port):
+    """A relative db path resolves against the launch directory; say which one."""
+    from pathlib import Path
+
+    from hitman import cli
+
+    db = tmp_path / "sub" / "hitman.db"
+    monkeypatch.setattr(
+        cli.sys, "argv",
+        ["hitman", "--db", str(db), "--no-browser", "--port", str(closed_port)],
+    )
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *a, **k: None)
+    cli.main()
+    printed = capsys.readouterr().out
+    assert str(Path(db).resolve()) in printed

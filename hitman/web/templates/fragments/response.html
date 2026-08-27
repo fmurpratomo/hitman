@@ -1,7 +1,7 @@
-{% set note = note if note is defined else None %}
-{% if note %}
+{% set notes = notes if notes is defined else [] %}
+{% for note in notes %}
 <p class="warnings">{{ note }}</p>
-{% endif %}
+{% endfor %}
 {% if response.error %}
 <div class="status-line error">
   <span class="badge err">Failed</span>

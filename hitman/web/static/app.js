@@ -7,6 +7,7 @@
 //   data-form     selector of a form to serialise into the request body
 //   data-vals     JSON object of extra body fields
 //   data-confirm  text to confirm before firing
+//   data-open-dialog / data-close-dialog  a <dialog> to open or close after
 //
 // A reply may contain <div data-oob="#selector">...</div> elements; their
 // contents go to that selector and the rest goes to data-target.
@@ -36,6 +37,9 @@ async function fire(trigger) {
   if (method !== 'GET' && method !== 'DELETE') {
     const form = trigger.dataset.form && document.querySelector(trigger.dataset.form);
     const body = form ? new FormData(form) : new FormData();
+    // A control that carries its own name/value — a <select>, say — is its own
+    // payload and needs no surrounding form.
+    if (!form && trigger.name) body.set(trigger.name, trigger.value);
     if (trigger.dataset.vals) {
       for (const [key, value] of Object.entries(JSON.parse(trigger.dataset.vals))) {
         body.set(key, value);
@@ -53,6 +57,12 @@ async function fire(trigger) {
       return;
     }
     swap(text, trigger.dataset.target);
+    if (trigger.dataset.closeDialog) {
+      document.querySelector(trigger.dataset.closeDialog).close();
+    }
+    if (trigger.dataset.openDialog) {
+      document.querySelector(trigger.dataset.openDialog).showModal();
+    }
   } catch (error) {
     toast('Request failed: ' + error.message);
   } finally {
@@ -67,6 +77,10 @@ document.addEventListener('change', (event) => {
   const box = event.target;
   if (box.classList.contains('toggle')) {
     box.previousElementSibling.value = box.checked ? '1' : '0';
+  }
+  if (box.dataset.url) {
+    fire(box);
+    return;
   }
   if (box.id === 'body-type') {
     document.getElementById('body-text').hidden = box.value === 'none' || box.value === 'form';
@@ -83,6 +97,12 @@ document.addEventListener('click', (event) => {
   if (trigger) {
     event.preventDefault();
     fire(trigger);
+    return;
+  }
+
+  // A close-only control (Cancel) has no data-url, so it never reaches fire().
+  if (target.dataset.closeDialog && !target.dataset.url) {
+    document.querySelector(target.dataset.closeDialog).close();
     return;
   }
 

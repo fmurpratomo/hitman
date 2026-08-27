@@ -1,6 +1,6 @@
 import pytest
 
-from hitman.core.models import Request, Response
+from hitman.core.models import KeyValue, Request, Response
 from hitman.core.store import HISTORY_LIMIT, STORED_BODY_LIMIT, Store
 
 
@@ -111,3 +111,82 @@ def test_store_creates_missing_parent_directory(tmp_path):
     store.save_request("x", make_request())
     store.close()
     assert (tmp_path / "nested" / "deeper" / "hitman.db").exists()
+
+
+# --- environments -------------------------------------------------------
+
+
+def make_vars():
+    return [KeyValue("base_url", "http://localhost:3000"), KeyValue("token", "abc")]
+
+
+def test_environment_round_trip(store):
+    env_id = store.save_environment("Local", make_vars())
+    env = store.get_environment(env_id)
+    assert env.name == "Local"
+    assert [(v.key, v.value) for v in env.variables] == [
+        ("base_url", "http://localhost:3000"),
+        ("token", "abc"),
+    ]
+
+
+def test_environments_are_listed_alphabetically(store):
+    store.save_environment("Staging", [])
+    store.save_environment("Local", [])
+    assert [e.name for e in store.list_environments()] == ["Local", "Staging"]
+
+
+def test_as_mapping_skips_disabled_variables(store):
+    env_id = store.save_environment(
+        "Local", [KeyValue("a", "1"), KeyValue("b", "2", enabled=False)]
+    )
+    assert store.get_environment(env_id).as_mapping() == {"a": "1"}
+
+
+def test_update_environment_replaces_name_and_variables(store):
+    env_id = store.save_environment("Local", make_vars())
+    store.update_environment(env_id, "Prod", [KeyValue("base_url", "https://api.live")])
+    env = store.get_environment(env_id)
+    assert env.name == "Prod"
+    assert env.as_mapping() == {"base_url": "https://api.live"}
+
+
+def test_no_active_environment_by_default(store):
+    assert store.active_environment() is None
+
+
+def test_active_environment_is_remembered(store):
+    env_id = store.save_environment("Local", make_vars())
+    store.set_active_environment(env_id)
+    assert store.active_environment().name == "Local"
+
+
+def test_setting_active_twice_does_not_duplicate(store):
+    first = store.save_environment("Local", [])
+    second = store.save_environment("Prod", [])
+    store.set_active_environment(first)
+    store.set_active_environment(second)
+    assert store.active_environment().name == "Prod"
+
+
+def test_active_can_be_cleared(store):
+    store.set_active_environment(store.save_environment("Local", []))
+    store.set_active_environment(None)
+    assert store.active_environment() is None
+
+
+def test_deleting_the_active_environment_clears_the_pointer(store):
+    """Otherwise the setting dangles and every later send explodes."""
+    env_id = store.save_environment("Local", make_vars())
+    store.set_active_environment(env_id)
+    store.delete_environment(env_id)
+    assert store.get_environment(env_id) is None
+    assert store.active_environment() is None
+
+
+def test_deleting_a_different_environment_leaves_the_pointer(store):
+    keep = store.save_environment("Local", [])
+    other = store.save_environment("Prod", [])
+    store.set_active_environment(keep)
+    store.delete_environment(other)
+    assert store.active_environment().id == keep

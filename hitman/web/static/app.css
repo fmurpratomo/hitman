@@ -72,3 +72,11 @@ dialog menu { display: flex; gap: 8px; justify-content: flex-end; padding: 0; }
 .clip-full { display: block; max-height: 30vh; overflow: auto; word-break: break-all;
   background: rgba(76,141,255,.07); border-left: 2px solid var(--accent);
   padding: 6px 8px; margin: 4px 0; }
+.envpick { display: inline-flex; align-items: center; gap: 6px; margin-right: 4px; }
+.envpick select { padding: 6px 8px; }
+.small { font-size: 12px; }
+#env-dialog { width: min(640px, 92vw); }
+#env-dialog h2 { font-size: 15px; margin: 0 0 10px; }
+#env-dialog input[name="env_name"] { width: 100%; margin-bottom: 4px; }
+#env-dialog menu { margin-top: 12px; }
+code { background: var(--line); padding: 1px 5px; border-radius: 4px; }

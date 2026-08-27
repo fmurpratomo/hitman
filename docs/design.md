@@ -40,6 +40,14 @@ tweak.
 
 ## 3. Scope
 
+### Shipped after v1
+
+- Environments and `{{variable}}` substitution — `core/variables.py` plus the
+  `environments` and `settings` tables. Resolution happens in the `/send`
+  route before the engine runs, so both engines and the history record all see
+  the same fully-resolved request. Saved requests keep the template; history
+  keeps the resolution.
+
 ### In scope (v1)
 
 - Request builder: method, URL, query parameters, headers, body.
@@ -468,8 +476,6 @@ there is deliberately no `--host` flag.
 
 Enabled by, but not part of, this design:
 
-- Environments and `{{variable}}` substitution — a third SQLite table plus
-  a substitution pass in `core` before the engine runs.
 - Auth helper forms — pure UI sugar over the existing headers list.
 - Postman collection import/export — a converter module in `core`.
 - A `hitman send` CLI reusing `core` with no changes.

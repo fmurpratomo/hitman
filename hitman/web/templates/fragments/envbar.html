@@ -1,0 +1,17 @@
+{% from "fragments/_macros.html" import kv_table %}
+<label class="envpick">
+  <span class="muted">Env</span>
+  <select id="env-select" name="env_id" data-action="post"
+          data-url="/environments/active" data-target="#envbar">
+    <option value="" {% if not active_env %}selected{% endif %}>No environment</option>
+    {% for env in environments %}
+    <option value="{{ env.id }}" {% if active_env and active_env.id == env.id %}selected{% endif %}>{{ env.name }}</option>
+    {% endfor %}
+  </select>
+</label>
+{% if active_env %}
+<button type="button" data-action="get" data-url="/environments/{{ active_env.id }}/edit"
+        data-target="#env-editor" data-open-dialog="#env-dialog">Edit</button>
+{% endif %}
+<button type="button" data-action="get" data-url="/environments/new"
+        data-target="#env-editor" data-open-dialog="#env-dialog">New</button>

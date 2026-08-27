@@ -13,7 +13,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from hitman.core.models import Request, Response, normalize
+from hitman.core.models import KeyValue, Request, Response, normalize
+
+ACTIVE_ENVIRONMENT = "active_environment"
 
 HISTORY_LIMIT = 500
 STORED_BODY_LIMIT = 256 * 1024
@@ -25,6 +27,21 @@ CREATE TABLE IF NOT EXISTS saved_requests (
   request_json TEXT NOT NULL,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS environments (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  name           TEXT NOT NULL,
+  variables_json TEXT NOT NULL,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+
+-- One row per remembered preference. There is no session or user, so the
+-- active environment is application state and belongs in the database.
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS history (
@@ -53,6 +70,19 @@ class SavedRequest:
     request: Request
     created_at: str
     updated_at: str
+
+
+@dataclass
+class Environment:
+    id: int
+    name: str
+    variables: list[KeyValue]
+    created_at: str
+    updated_at: str
+
+    def as_mapping(self) -> dict[str, str]:
+        """Enabled variables only — a disabled row is not defined."""
+        return {row.key: row.value for row in self.variables if row.enabled and row.key}
 
 
 @dataclass
@@ -124,6 +154,72 @@ class Store:
             self._conn.execute("DELETE FROM saved_requests WHERE id = ?", (request_id,))
             self._conn.commit()
 
+    # --- environments ---------------------------------------------------
+
+    def save_environment(self, name: str, variables: list[KeyValue]) -> int:
+        stamp = _now()
+        with self._lock:
+            cursor = self._conn.execute(
+                "INSERT INTO environments (name, variables_json, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?)",
+                (name, _dump_vars(variables), stamp, stamp),
+            )
+            self._conn.commit()
+            return int(cursor.lastrowid)
+
+    def update_environment(self, env_id: int, name: str, variables: list[KeyValue]) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE environments SET name = ?, variables_json = ?, updated_at = ?"
+                " WHERE id = ?",
+                (name, _dump_vars(variables), _now(), env_id),
+            )
+            self._conn.commit()
+
+    def get_environment(self, env_id: int) -> Environment | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM environments WHERE id = ?", (env_id,)
+            ).fetchone()
+        return _row_to_env(row) if row else None
+
+    def list_environments(self) -> list[Environment]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM environments ORDER BY name").fetchall()
+        return [_row_to_env(row) for row in rows]
+
+    def delete_environment(self, env_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM environments WHERE id = ?", (env_id,))
+            # Deleting the active environment must not leave a dangling id.
+            self._conn.execute(
+                "DELETE FROM settings WHERE key = ? AND value = ?",
+                (ACTIVE_ENVIRONMENT, str(env_id)),
+            )
+            self._conn.commit()
+
+    def set_active_environment(self, env_id: int | None) -> None:
+        with self._lock:
+            if env_id is None:
+                self._conn.execute("DELETE FROM settings WHERE key = ?", (ACTIVE_ENVIRONMENT,))
+            else:
+                self._conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?)"
+                    " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (ACTIVE_ENVIRONMENT, str(env_id)),
+                )
+            self._conn.commit()
+
+    def active_environment(self) -> Environment | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM settings WHERE key = ?", (ACTIVE_ENVIRONMENT,)
+            ).fetchone()
+        if row is None:
+            return None
+        # The row may point at an environment deleted by another route.
+        return self.get_environment(int(row["value"]))
+
     # --- history --------------------------------------------------------
 
     def add_history(self, request: Request, response: Response) -> int:
@@ -175,6 +271,20 @@ class Store:
         with self._lock:
             self._conn.execute("DELETE FROM history")
             self._conn.commit()
+
+
+def _dump_vars(variables: list[KeyValue]) -> str:
+    return json.dumps([{"key": v.key, "value": v.value, "enabled": v.enabled} for v in variables])
+
+
+def _row_to_env(row: sqlite3.Row) -> Environment:
+    return Environment(
+        id=row["id"],
+        name=row["name"],
+        variables=[KeyValue(**item) for item in json.loads(row["variables_json"])],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
 
 
 def _row_to_saved(row: sqlite3.Row) -> SavedRequest:

@@ -1,0 +1,25 @@
+{% from "fragments/_macros.html" import kv_table %}
+<h2>{{ "Edit environment" if env else "New environment" }}</h2>
+<form id="env-form">
+  <input type="text" name="env_name" value="{{ env.name if env else '' }}"
+         placeholder="Local, Staging, Prod…" autocomplete="off">
+  <p class="muted small">
+    Refer to these anywhere in a request as <code>{{ '{{name}}' }}</code> — URL,
+    params, headers or body.
+  </p>
+  {{ kv_table("var", env.variables if env else [], "base_url", "http://localhost:3000") }}
+</form>
+<menu>
+  {% if env %}
+  <button type="button" class="danger" data-action="delete"
+          data-url="/environments/{{ env.id }}" data-target="#envbar"
+          data-confirm="Delete the environment {{ env.name }}?"
+          data-close-dialog="#env-dialog">Delete</button>
+  {% endif %}
+  <button type="button" data-close-dialog="#env-dialog">Cancel</button>
+  <button type="button" class="primary"
+          data-action="{{ 'put' if env else 'post' }}"
+          data-url="{{ '/environments/' ~ env.id if env else '/environments' }}"
+          data-form="#env-form" data-target="#envbar"
+          data-close-dialog="#env-dialog">Save</button>
+</menu>

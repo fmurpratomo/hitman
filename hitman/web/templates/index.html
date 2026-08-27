@@ -3,6 +3,7 @@
 <header class="topbar">
   <h1>Hitman</h1>
   <div class="toolbar">
+    <span id="envbar">{% include "fragments/envbar.html" %}</span>
     <button type="button" id="import-curl-open">Import curl</button>
     <button type="button" id="copy-curl">Copy as curl</button>
   </div>
@@ -17,6 +18,8 @@
     </div>
   </section>
 </main>
+
+<dialog id="env-dialog"><div id="env-editor"></div></dialog>
 
 <dialog id="import-dialog">
   <form method="dialog">
