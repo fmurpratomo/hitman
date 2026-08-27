@@ -84,13 +84,13 @@ hitman/
 │   └── store.py            # SQLite: history + saved requests
 ├── web/
 │   ├── app.py              # FastAPI app factory, static/template wiring
-│   ├── routes.py           # HTMX endpoints returning HTML fragments
+│   ├── routes.py           # fragment endpoints driven by app.js
 │   ├── forms.py            # HTML form payload <-> Request
 │   ├── templates/
 │   │   ├── base.html
 │   │   ├── index.html
 │   │   └── fragments/      # builder.html, response.html, sidebar.html
-│   └── static/             # vendored htmx.min.js, app.css, app.js
+│   └── static/             # app.css, app.js (no dependencies)
 ├── cli.py                  # entry point: starts uvicorn on 127.0.0.1
 └── tests/
 ```
@@ -344,8 +344,8 @@ are comparable too.
 
 ### Routes
 
-All non-`GET /` responses are HTML fragments for HTMX to swap, except
-`/export-curl` which is `text/plain`.
+All non-`GET /` responses are HTML fragments that `app.js` swaps into the
+page, except `/export-curl` which is `text/plain`.
 
 | Method | Path | Returns |
 |---|---|---|
@@ -452,8 +452,9 @@ localhost calls, the app's primary use case, actually work.
   too old for the `X | None` syntax used throughout).
 - `fastapi`, `uvicorn[standard]`, `jinja2`, `httpx`, `python-multipart`.
 - `pytest` for tests, `ruff` for lint.
-- HTMX vendored as a single file in `web/static/`, not loaded from a CDN,
-  so the app works with no internet connection.
+- No third-party JavaScript at all. Interactivity is a ~50-line fetch/swap
+  layer in `web/static/app.js`, so the app has no supply chain and works
+  with no internet connection.
 - No Node.js, no bundler, no build step.
 
 ```

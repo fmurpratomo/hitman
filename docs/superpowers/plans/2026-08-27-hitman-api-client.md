@@ -4,9 +4,9 @@
 
 **Goal:** Build a local-only web app that sends HTTP requests to localhost and public APIs, imports and exports curl commands, and can execute requests through either `httpx` or the real `curl` binary.
 
-**Architecture:** A pure-Python `hitman/core/` package (models, curl import/export, two send engines, SQLite storage) that imports nothing from the web layer, plus a thin FastAPI + Jinja2 + HTMX layer in `hitman/web/` that renders HTML fragments. No JSON API, no npm, no build step.
+**Architecture:** A pure-Python `hitman/core/` package (models, curl import/export, two send engines, SQLite storage) that imports nothing from the web layer, plus a thin FastAPI + Jinja2 layer in `hitman/web/` that renders HTML fragments. Interactivity is a ~50-line hand-written fetch/swap layer in `app.js` — no framework, no third-party JavaScript, no npm, no build step.
 
-**Tech Stack:** Python 3.11, FastAPI, uvicorn, Jinja2, httpx, SQLite (stdlib `sqlite3`), HTMX (vendored), pytest, ruff, uv.
+**Tech Stack:** Python 3.11, FastAPI, uvicorn, Jinja2, httpx, SQLite (stdlib `sqlite3`), vanilla JavaScript, pytest, ruff, uv.
 
 **Spec:** `docs/superpowers/specs/2026-08-27-hitman-api-client-design.md`
 
@@ -21,6 +21,7 @@ Every task's requirements implicitly include this section.
 - **Jinja2 autoescape stays on**, and response bodies are rendered as escaped text inside `<pre>`. Response bodies are attacker-controlled by definition; an API returning `<script>` must not execute inside the app.
 - **Bind address is hardcoded `127.0.0.1`.** There is deliberately no `--host` flag.
 - **All SQL uses parameter binding.** No f-strings or `%` formatting in SQL.
+- **No third-party JavaScript and no CDN links.** The only script the page loads is `/static/app.js`. Do not add a framework, and do not fetch one at build or run time.
 - **TDD:** write the failing test, watch it fail, implement minimally, watch it pass, commit. Every task ends on a green test run.
 - **Commit style:** conventional commits (`feat:`, `test:`, `fix:`, `chore:`).
 
@@ -38,9 +39,9 @@ Every task's requirements implicitly include this section.
 | `hitman/core/store.py` | `Store`, `SavedRequest`, `HistoryEntry` |
 | `hitman/web/forms.py` | HTML form payload ↔ `Request` |
 | `hitman/web/app.py` | FastAPI app factory, template/static wiring |
-| `hitman/web/routes.py` | all HTMX endpoints |
+| `hitman/web/routes.py` | all fragment endpoints |
 | `hitman/web/templates/` | `base.html`, `index.html`, `fragments/*.html` |
-| `hitman/web/static/` | vendored `htmx.min.js`, `app.css`, `app.js` |
+| `hitman/web/static/` | `app.css`, `app.js` (fetch/swap layer, no dependencies) |
 | `hitman/cli.py` | argument parsing, starts uvicorn on 127.0.0.1 |
 
 ---
@@ -2195,28 +2196,32 @@ git commit -m "feat: add curl subprocess engine with parity tests"
 **Files:**
 - Create: `hitman/web/app.py`, `hitman/web/forms.py`, `hitman/web/routes.py`
 - Create: `hitman/web/templates/base.html`, `index.html`, `fragments/_macros.html`, `fragments/builder.html`, `fragments/sidebar.html`, `fragments/response.html`
-- Create: `hitman/web/static/app.css`, `hitman/web/static/app.js`, `hitman/web/static/htmx.min.js`
+- Create: `hitman/web/static/app.css`, `hitman/web/static/app.js`
 - Create: `tests/web/conftest.py`, `tests/web/test_index.py`
 
 **Interfaces:**
 - Consumes: `hitman.core.store.Store`, `hitman.core.engines.curl_engine.curl_available`, `hitman.core.models`.
 - Produces: `create_app(db_path=None) -> FastAPI` with `app.state.store`, `app.state.templates`, `app.state.curl_available`; `request_from_form(form) -> Request`; `router` in `routes.py`; pytest fixtures `app` and `client`.
 
-- [ ] **Step 1: Vendor HTMX**
+There is no front-end framework. `app.js` implements a small declarative
+fetch/swap layer — about 50 lines — that covers everything this UI needs:
 
-HTMX is vendored rather than loaded from a CDN so the app works offline. **This downloads a file from unpkg.com — confirm with the user before running it.**
+| Attribute | Meaning |
+|---|---|
+| `data-url` | endpoint to call (its presence is what makes an element a trigger) |
+| `data-action` | HTTP method, default `get` |
+| `data-target` | selector whose `innerHTML` is replaced with the reply |
+| `data-form` | selector of a form to serialise into the request body |
+| `data-vals` | JSON object of extra fields to add to the body |
+| `data-confirm` | text to confirm before firing |
 
-```bash
-curl -sL https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js -o hitman/web/static/htmx.min.js
-```
+A returned fragment may contain `<div data-oob="#selector">…</div>` elements.
+Their contents are swapped into that selector, and the remainder goes to
+`data-target` — the same idea as an out-of-band swap. Because every trigger
+is bound by one delegated listener on `document`, swapped-in markup is live
+immediately with no re-initialisation step.
 
-Verify it landed (should be roughly 50 KB and start with a minified IIFE):
-
-```bash
-wc -c hitman/web/static/htmx.min.js && head -c 60 hitman/web/static/htmx.min.js
-```
-
-- [ ] **Step 2: Write the failing tests**
+- [ ] **Step 1: Write the failing tests**
 
 `tests/web/conftest.py`:
 
@@ -2256,6 +2261,8 @@ def base_form():
 `tests/web/test_index.py`:
 
 ```python
+import re
+
 from hitman.core.models import DEFAULT_TIMEOUT
 from hitman.web.forms import request_from_form
 
@@ -2271,11 +2278,9 @@ def test_index_renders(client):
     assert "Send" in page.text
 
 
-def test_index_serves_vendored_htmx_not_a_cdn(client):
-    page = client.get("/")
-    assert "/static/htmx.min.js" in page.text
-    assert "unpkg.com" not in page.text
-    assert client.get("/static/htmx.min.js").status_code == 200
+def test_index_loads_only_local_first_party_scripts(client):
+    sources = re.findall(r'<script[^>]*src="([^"]+)"', client.get("/").text)
+    assert sources == ["/static/app.js"]
 
 
 def test_form_parses_key_value_rows():
@@ -2333,12 +2338,12 @@ class _MultiForm(dict):
         return value[0] if isinstance(value, list) and value else value
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/web -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'hitman.web.app'`
 
-- [ ] **Step 4: Implement the form translator**
+- [ ] **Step 3: Implement the form translator**
 
 `hitman/web/forms.py`:
 
@@ -2398,7 +2403,7 @@ def request_from_form(form) -> Request:
     )
 ```
 
-- [ ] **Step 5: Implement the app factory**
+- [ ] **Step 4: Implement the app factory**
 
 `hitman/web/app.py`:
 
@@ -2442,12 +2447,12 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     return app
 ```
 
-- [ ] **Step 6: Implement routes (index and health only for now)**
+- [ ] **Step 5: Implement routes (index and health only for now)**
 
 `hitman/web/routes.py`:
 
 ```python
-"""HTMX endpoints. Every response is an HTML fragment except /export-curl."""
+"""Fragment endpoints. Every response is an HTML fragment except /export-curl."""
 
 from __future__ import annotations
 
@@ -2485,7 +2490,7 @@ def index(http_request: HttpRequest):
 Note the context key is `req`, not `request`: Starlette injects the HTTP
 request under `request`, and shadowing it breaks `url_for` inside templates.
 
-- [ ] **Step 7: Write the templates**
+- [ ] **Step 6: Write the templates**
 
 `hitman/web/templates/base.html`:
 
@@ -2497,7 +2502,6 @@ request under `request`, and shadowing it breaks `url_for` inside templates.
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hitman — API testing</title>
   <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/htmx.min.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -2590,10 +2594,12 @@ request under `request`, and shadowing it breaks `url_for` inside templates.
       {% endfor %}
     </select>
     <input type="text" name="url" value="{{ req.url }}" placeholder="http://localhost:3000/api/users" autocomplete="off">
-    <button type="button" class="primary" hx-post="/send" hx-include="#request-form"
-            hx-vals='{"engine": "httpx"}' hx-target="#response" hx-swap="innerHTML">Send</button>
-    <button type="button" hx-post="/send" hx-include="#request-form"
-            hx-vals='{"engine": "curl"}' hx-target="#response" hx-swap="innerHTML"
+    <button type="button" class="primary" data-action="post" data-url="/send"
+            data-form="#request-form" data-vals='{"engine": "httpx"}'
+            data-target="#response">Send</button>
+    <button type="button" data-action="post" data-url="/send"
+            data-form="#request-form" data-vals='{"engine": "curl"}'
+            data-target="#response"
             {% if not curl_available %}disabled title="The curl binary was not found on this system"{% endif %}>
       Send with curl
     </button>
@@ -2642,8 +2648,8 @@ request under `request`, and shadowing it breaks `url_for` inside templates.
 
   <div class="save-row">
     <input type="text" id="save-name" name="save_name" placeholder="Name this request" autocomplete="off">
-    <button type="button" id="save-request" hx-post="/requests" hx-include="#request-form"
-            hx-target="#sidebar" hx-swap="innerHTML">Save</button>
+    <button type="button" id="save-request" data-action="post" data-url="/requests"
+            data-form="#request-form" data-target="#sidebar">Save</button>
   </div>
 </form>
 ```
@@ -2658,7 +2664,7 @@ request under `request`, and shadowing it breaks `url_for` inside templates.
 
 <div data-panel="history" class="panel list">
   {% for entry in history %}
-  <button type="button" class="entry" hx-get="/history/{{ entry.id }}" hx-target="#builder" hx-swap="innerHTML">
+  <button type="button" class="entry" data-action="get" data-url="/history/{{ entry.id }}" data-target="#builder">
     <span class="verb">{{ entry.request.method }}</span>
     <span class="url">{{ entry.request.url }}</span>
     {% if entry.response.error %}
@@ -2672,20 +2678,20 @@ request under `request`, and shadowing it breaks `url_for` inside templates.
   <p class="empty">Nothing sent yet.</p>
   {% endfor %}
   {% if history %}
-  <button type="button" class="danger" hx-delete="/history" hx-target="#sidebar" hx-swap="innerHTML"
-          hx-confirm="Clear all history?">Clear history</button>
+  <button type="button" class="danger" data-action="delete" data-url="/history"
+          data-target="#sidebar" data-confirm="Clear all history?">Clear history</button>
   {% endif %}
 </div>
 
 <div data-panel="saved" class="panel list" hidden>
   {% for item in saved %}
   <div class="entry-row">
-    <button type="button" class="entry" hx-get="/requests/{{ item.id }}" hx-target="#builder" hx-swap="innerHTML">
+    <button type="button" class="entry" data-action="get" data-url="/requests/{{ item.id }}" data-target="#builder">
       <span class="verb">{{ item.request.method }}</span>
       <span class="name">{{ item.name }}</span>
     </button>
-    <button type="button" class="remove" hx-delete="/requests/{{ item.id }}"
-            hx-target="#sidebar" hx-swap="innerHTML" aria-label="Delete {{ item.name }}">&times;</button>
+    <button type="button" class="delete" data-action="delete" data-url="/requests/{{ item.id }}"
+            data-target="#sidebar" aria-label="Delete {{ item.name }}">&times;</button>
   </div>
   {% else %}
   <p class="empty">No saved requests.</p>
@@ -2731,14 +2737,13 @@ request under `request`, and shadowing it breaks `url_for` inside templates.
 {% endif %}
 ```
 
-This fragment deliberately contains **no** out-of-band swap. Task 8 wraps it
-for the send route; history replay in Task 10 nests it inside a different
-out-of-band swap, and htmx does not process an `hx-swap-oob` element nested
-inside another one.
+This fragment deliberately contains **no** out-of-band marker. Task 8 wraps
+it for the send route and Task 10 wraps it for history replay; a fragment
+that carried its own `data-oob` would fight whichever wrapper included it.
 
 `{{ pretty }}` and `{{ response.body }}` are autoescaped by Jinja2 and sit inside `<pre>`, which is exactly the rule from the Global Constraints. Never change these to `| safe`.
 
-- [ ] **Step 8: Write the static assets**
+- [ ] **Step 7: Write the static assets**
 
 `hitman/web/static/app.css`:
 
@@ -2792,6 +2797,8 @@ pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6p
   text-align: left; background: none; border: none; padding: 6px; border-radius: 6px; }
 .list .entry:hover { background: var(--panel); }
 .entry-row { display: flex; align-items: center; }
+.entry-row .delete { background: none; border: none; color: var(--muted); padding: 6px 8px; }
+.entry-row .delete:hover { color: var(--err); }
 .entry .verb { color: var(--accent); font-weight: 600; font-size: 11px; min-width: 46px; }
 .entry .url, .entry .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty { color: var(--muted); padding: 8px; }
@@ -2809,6 +2816,68 @@ dialog menu { display: flex; gap: 8px; justify-content: flex-end; padding: 0; }
 `hitman/web/static/app.js`:
 
 ```js
+// A small declarative fetch/swap layer. This is the whole front-end
+// framework: no dependencies, no build step, no third-party code.
+//
+//   data-url      endpoint to call (its presence makes an element a trigger)
+//   data-action   HTTP method, default "get"
+//   data-target   selector whose innerHTML is replaced with the reply
+//   data-form     selector of a form to serialise into the request body
+//   data-vals     JSON object of extra body fields
+//   data-confirm  text to confirm before firing
+//
+// A reply may contain <div data-oob="#selector">...</div> elements; their
+// contents go to that selector and the rest goes to data-target.
+
+function swap(html, targetSelector) {
+  const holder = document.createElement('div');
+  holder.innerHTML = html;
+
+  holder.querySelectorAll('[data-oob]').forEach((piece) => {
+    const destination = document.querySelector(piece.dataset.oob);
+    if (destination) destination.innerHTML = piece.innerHTML;
+    piece.remove();
+  });
+
+  if (targetSelector) {
+    const target = document.querySelector(targetSelector);
+    if (target) target.innerHTML = holder.innerHTML;
+  }
+}
+
+async function fire(trigger) {
+  if (trigger.dataset.confirm && !window.confirm(trigger.dataset.confirm)) return;
+
+  const method = (trigger.dataset.action || 'get').toUpperCase();
+  const options = { method };
+
+  if (method !== 'GET' && method !== 'DELETE') {
+    const form = trigger.dataset.form && document.querySelector(trigger.dataset.form);
+    const body = form ? new FormData(form) : new FormData();
+    if (trigger.dataset.vals) {
+      for (const [key, value] of Object.entries(JSON.parse(trigger.dataset.vals))) {
+        body.set(key, value);
+      }
+    }
+    options.body = body;
+  }
+
+  trigger.disabled = true;
+  try {
+    const reply = await fetch(trigger.dataset.url, options);
+    const text = await reply.text();
+    if (!reply.ok) {
+      toast(text);
+      return;
+    }
+    swap(text, trigger.dataset.target);
+  } catch (error) {
+    toast('Request failed: ' + error.message);
+  } finally {
+    trigger.disabled = false;
+  }
+}
+
 // Keep the hidden "_enabled" field in step with its checkbox. An unchecked
 // checkbox submits nothing, which would shift the parallel arrays the server
 // reads, so the hidden field carries the real value.
@@ -2825,6 +2894,15 @@ document.addEventListener('change', (event) => {
 
 document.addEventListener('click', (event) => {
   const target = event.target;
+
+  // Checked first: every fetch/swap trigger is identified by data-url, and
+  // one delegated listener means swapped-in markup is live immediately.
+  const trigger = target.closest('[data-url]');
+  if (trigger) {
+    event.preventDefault();
+    fire(trigger);
+    return;
+  }
 
   if (target.dataset.tab) {
     const bar = target.closest('.tabs');
@@ -2880,15 +2958,13 @@ async function importCurl() {
   const body = new FormData();
   body.append('text', document.getElementById('curl-text').value);
   const reply = await fetch('/import-curl', { method: 'POST', body });
+  const text = await reply.text();
   if (!reply.ok) {
     // Spec: a bad paste must leave the existing form untouched.
-    toast(await reply.text());
+    toast(text);
     return;
   }
-  const builder = document.getElementById('builder');
-  builder.innerHTML = await reply.text();
-  // Swapping innerHTML by hand leaves the new hx-* attributes unwired.
-  htmx.process(builder);
+  swap(text, '#builder');
   document.getElementById('import-dialog').close();
 }
 
@@ -2902,12 +2978,12 @@ function toast(message) {
 }
 ```
 
-- [ ] **Step 9: Run the tests to verify they pass**
+- [ ] **Step 8: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/web -v`
 Expected: PASS, 7 tests
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add hitman/web tests/web
@@ -2959,7 +3035,7 @@ def test_send_writes_history(client, app, base_form, fixture_server):
 
 def test_send_refreshes_the_sidebar_out_of_band(client, base_form, fixture_server):
     reply = send(client, base_form, url=f"{fixture_server}/json")
-    assert 'hx-swap-oob="true"' in reply.text
+    assert 'data-oob="#sidebar"' in reply.text
 
 
 def test_failed_send_shows_a_friendly_message_and_is_recorded(
@@ -3064,7 +3140,7 @@ async def send(http_request: HttpRequest):
 
 ```html
 {% include "fragments/response.html" %}
-<div id="sidebar" hx-swap-oob="true">{% include "fragments/sidebar.html" %}</div>
+<div data-oob="#sidebar">{% include "fragments/sidebar.html" %}</div>
 ```
 
 Sending is the only action that changes history, so it is the only one that
@@ -3306,7 +3382,7 @@ def test_history_entry_reloads_request_and_response(client, app):
     assert 'value="http://localhost:3000/users"' in reply.text
     assert '<option value="POST" selected>' in reply.text
     # The response comes back too, swapped out of band into #response.
-    assert 'id="response" hx-swap-oob="true"' in reply.text
+    assert 'data-oob="#response"' in reply.text
     assert "201" in reply.text
 
 
@@ -3357,7 +3433,7 @@ Expected: FAIL — 404 on every new route
 
 ```html
 {% include "fragments/builder.html" %}
-<div id="response" hx-swap-oob="true">{% include "fragments/response.html" %}</div>
+<div data-oob="#response">{% include "fragments/response.html" %}</div>
 ```
 
 - [ ] **Step 4: Add the routes**
@@ -3637,7 +3713,7 @@ Expected: no findings. Fix anything reported.
 - [ ] **Step 7: Smoke-test the real application**
 
 This is the step that catches what unit tests cannot — template syntax
-errors, broken HTMX wiring, dead JavaScript.
+errors, broken data-url wiring, dead JavaScript.
 
 In one terminal, start a throwaway API to point at:
 
