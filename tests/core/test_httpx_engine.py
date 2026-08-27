@@ -31,7 +31,6 @@ def test_error_status_is_not_an_error(fixture_server):
     response = send(f"{fixture_server}/status/404")
     assert response.status == 404
     assert response.error is None
-    assert response.ok is False
 
 
 def test_params_reach_the_server(fixture_server):

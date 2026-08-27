@@ -129,10 +129,6 @@ class Response:
     error: str | None = None
     curl_exit_code: int | None = None
 
-    @property
-    def ok(self) -> bool:
-        return self.error is None and self.status is not None and self.status < 400
-
 
 def normalize(request: Request) -> Request:
     """Canonical form used for storage, comparison and the round-trip test.

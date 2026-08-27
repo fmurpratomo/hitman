@@ -40,7 +40,7 @@ different database file, and `--no-browser` to stay in the terminal.
   shell. The curl engine passes an argv list with `shell=False`.
 - Response bodies are rendered as escaped text inside `<pre>`, so an API that
   returns `<script>` cannot execute anything in the app.
-- No third-party JavaScript. The front end is one ~150-line `app.js`.
+- No third-party JavaScript. The front end is one 160-line `app.js`.
 
 ## Not supported yet
 

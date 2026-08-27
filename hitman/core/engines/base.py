@@ -1,21 +1,13 @@
-"""Shared engine contract and response-body decoding."""
+"""Response-body decoding shared by both send engines."""
 
 from __future__ import annotations
 
-from typing import Protocol
-
-from hitman.core.models import MAX_DISPLAY_BODY, Request, Response
+from hitman.core.models import MAX_DISPLAY_BODY
 
 _TEXTUAL_HINTS = (
     "json", "text", "xml", "javascript", "html", "csv", "yaml",
     "x-www-form-urlencoded", "graphql",
 )
-
-
-class Engine(Protocol):
-    name: str
-
-    def send(self, request: Request) -> Response: ...
 
 
 def is_textual(content_type: str) -> bool:

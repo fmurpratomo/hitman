@@ -43,8 +43,6 @@ CREATE TABLE IF NOT EXISTS history (
   response_body         TEXT,
   created_at            TEXT NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_history_created ON history(created_at DESC);
 """
 
 
