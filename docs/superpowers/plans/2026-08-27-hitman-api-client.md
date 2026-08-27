@@ -3085,17 +3085,19 @@ Expected: FAIL — 404, because `/send` does not exist yet
 
 - [ ] **Step 3: Add the route**
 
-Append to `hitman/web/routes.py` (and extend the imports at the top):
+Append to `hitman/web/routes.py`. Merge these into the **existing** import
+block at the top of the file, and do **not** re-declare `router` — the
+decorators below attach to the one Task 7 created. `Request`, `HttpRequest`
+and `HTMLResponse` are already imported there.
 
 ```python
 import json
 
-from fastapi import APIRouter, Request as HttpRequest
 from starlette.concurrency import run_in_threadpool
 
 from hitman.core.engines.curl_engine import CurlEngine
 from hitman.core.engines.httpx_engine import HttpxEngine
-from hitman.core.models import Request, Response
+from hitman.core.models import Response
 from hitman.web.forms import request_from_form
 
 

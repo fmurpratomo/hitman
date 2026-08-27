@@ -11,5 +11,8 @@ venv/
 data/
 *.db
 
+# Subagent-driven-development scratch workspace
+.superpowers/
+
 # macOS
 .DS_Store
