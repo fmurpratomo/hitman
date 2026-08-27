@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -15,6 +14,7 @@ from hitman.core.curl_import import CurlParseError, parse_curl
 from hitman.core.engines.curl_engine import CurlEngine
 from hitman.core.engines.httpx_engine import HttpxEngine
 from hitman.core.models import Request, Response
+from hitman.web.bodyview import pretty_lines
 from hitman.web.forms import request_from_form
 
 log = logging.getLogger(__name__)
@@ -31,17 +31,6 @@ def render(http_request: HttpRequest, template: str, context: dict) -> HTMLRespo
     }
     # Request-first signature: passing the context dict alone is deprecated.
     return http_request.app.state.templates.TemplateResponse(http_request, template, full)
-
-
-def pretty_body(response: Response) -> str:
-    """Indent JSON when it is JSON; otherwise show the body unchanged."""
-    body = response.body
-    if not body.strip():
-        return body
-    try:
-        return json.dumps(json.loads(body), indent=2, ensure_ascii=False)
-    except (ValueError, TypeError):
-        return body
 
 
 def _engine(name: str):
@@ -86,7 +75,7 @@ async def send(http_request: HttpRequest):
         {
             "req": outgoing,
             "response": response,
-            "pretty": pretty_body(response),
+            "pretty": pretty_lines(response.body),
             "note": note,
         },
     )
@@ -161,7 +150,7 @@ def load_history(entry_id: int, http_request: HttpRequest):
         {
             "req": entry.request,
             "response": entry.response,
-            "pretty": pretty_body(entry.response),
+            "pretty": pretty_lines(entry.response.body),
             "warnings": [],
         },
     )

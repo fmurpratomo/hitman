@@ -50,6 +50,16 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
         elif path == "/binary":
             self._respond(200, bytes(range(256)) * 4, "image/png")
+        elif path == "/base64":
+            # A realistic "field so long it swamps the pane" payload, with a
+            # <script> in a neighbouring field to prove escaping still holds.
+            blob = "iVBORw0KGgoAAAANSUhEUg" + "A" * 4000
+            self._respond(
+                200,
+                json.dumps(
+                    {"name": "avatar.png", "note": "<script>alert(1)</script>", "data": blob}
+                ).encode(),
+            )
         elif path == "/html":
             self._respond(200, b"<script>alert(1)</script>", "text/html")
         elif path.startswith("/status/"):

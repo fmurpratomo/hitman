@@ -97,6 +97,18 @@ document.addEventListener('click', (event) => {
     return;
   }
 
+  if (target.classList.contains('clip-toggle')) {
+    // Both halves are already in the DOM, escaped by the template; the toggle
+    // only flips which one is visible.
+    const clip = target.closest('.clip');
+    const showingAll = clip.dataset.open === '1';
+    clip.querySelector('.clip-short').hidden = !showingAll;
+    clip.querySelector('.clip-full').hidden = showingAll;
+    clip.dataset.open = showingAll ? '0' : '1';
+    target.textContent = showingAll ? clip.dataset.label : 'show less';
+    return;
+  }
+
   if (target.classList.contains('add-row')) {
     const table = target.closest('.kv');
     table.querySelector('.rows').appendChild(

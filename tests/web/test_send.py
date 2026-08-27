@@ -65,3 +65,26 @@ def test_a_failed_history_write_still_returns_the_response(client, app, base_for
     assert "200" in reply.text
     assert "hello" in reply.text
     assert "not saved to history" in reply.text
+
+
+def test_a_long_base64_field_is_clipped_with_a_toggle(client, base_form, fixture_server):
+    reply = send(client, base_form, url=f"{fixture_server}/base64")
+    assert reply.status_code == 200
+    # The clipped half, the full half, and the control are all present.
+    assert 'class="clip-short"' in reply.text
+    assert 'class="clip-full"' in reply.text
+    assert "show all" in reply.text and "chars" in reply.text
+    # The whole blob is still delivered so "show all" has something to show.
+    assert "A" * 4000 in reply.text
+
+
+def test_short_fields_alongside_a_long_one_are_not_clipped(client, base_form, fixture_server):
+    reply = send(client, base_form, url=f"{fixture_server}/base64")
+    assert reply.text.count('class="clip-short"') == 1
+
+
+def test_clipping_does_not_defeat_escaping(client, base_form, fixture_server):
+    """A body is attacker-controlled in both the clipped and expanded halves."""
+    reply = send(client, base_form, url=f"{fixture_server}/base64")
+    assert "<script>alert(1)</script>" not in reply.text
+    assert "&lt;script&gt;" in reply.text
