@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Hitman local data (request history / saved requests)
+data/
+*.db
+
+# macOS
+.DS_Store
