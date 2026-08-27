@@ -11,6 +11,16 @@ uv sync
 uv run hitman
 ```
 
+Needs **Python 3.9 or newer** — the version already on your machine if you are
+on macOS or most Linux distributions, so no CPython install is required. Any
+stdlib newer than 3.9 is deliberately avoided for that reason.
+
+Without `uv`, a plain virtualenv works the same way:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e . && .venv/bin/hitman
+```
+
 Opens <http://127.0.0.1:8765>. Use `--port` for a different port, `--db` for a
 different database file, and `--no-browser` to stay in the terminal.
 

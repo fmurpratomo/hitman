@@ -2,7 +2,7 @@
 name = "hitman"
 version = "0.1.0"
 description = "Local API testing client"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
@@ -29,3 +29,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+# Keep the floor honest: this app must run on the system Python that ships
+# with macOS and most Linux distributions, where installing a newer CPython
+# may not be permitted.
+target-version = "py39"

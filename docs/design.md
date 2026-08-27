@@ -453,8 +453,14 @@ localhost calls, the app's primary use case, actually work.
 
 ## 13. Tech stack and commands
 
-- Python 3.11, managed with `uv` (3.9 is the macOS system Python and is
-  too old for the `X | None` syntax used throughout).
+- **Python 3.9 or newer.** The floor is deliberately the system Python that
+  ships with macOS and most Linux distributions, because a locked-down
+  machine may not permit installing a newer CPython. `from __future__ import
+  annotations` is used in every module, so `X | None` annotations cost
+  nothing at runtime; the constraint is only that no 3.10+ *runtime* feature
+  may be used. `ruff` is pinned to `target-version = "py39"` so it stops
+  proposing newer idioms — that is how `datetime.UTC` slipped in and broke
+  3.9 once already.
 - `fastapi`, `uvicorn[standard]`, `jinja2`, `httpx`, `python-multipart`.
 - `pytest` for tests, `ruff` for lint.
 - No third-party JavaScript at all. Interactivity is a ~50-line fetch/swap
