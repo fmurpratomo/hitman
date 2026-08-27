@@ -47,7 +47,10 @@ def request_from_form(form) -> Request:
         body_type=body_type,
         body=str(form.get("body") or ""),
         form_fields=_rows(form, "field"),
-        follow_redirects=form.get("follow_redirects") == "1",
-        verify_tls=form.get("verify_tls") == "1",
+        # Absent means "not specified", which must not silently weaken the
+        # request. Only an explicit "0" turns these off — a dropped field
+        # would otherwise disable TLS verification without anyone asking.
+        follow_redirects=str(form.get("follow_redirects", "1")) != "0",
+        verify_tls=str(form.get("verify_tls", "1")) != "0",
         timeout=max(MIN_TIMEOUT, min(timeout, MAX_TIMEOUT)),
     )

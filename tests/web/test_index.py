@@ -69,3 +69,18 @@ class _MultiForm(dict):
     def get(self, key, default=None):
         value = dict.get(self, key, default)
         return value[0] if isinstance(value, list) and value else value
+
+
+def test_missing_verify_tls_field_does_not_disable_verification():
+    """A dropped field must never weaken the request."""
+    assert request_from_form(_MultiForm({"url": "https://x.test/"})).verify_tls is True
+
+
+def test_missing_follow_redirects_field_defaults_to_following():
+    assert request_from_form(_MultiForm({"url": "https://x.test/"})).follow_redirects is True
+
+
+def test_explicit_zero_still_turns_them_off():
+    parsed = request_from_form(_MultiForm({"verify_tls": "0", "follow_redirects": "0"}))
+    assert parsed.verify_tls is False
+    assert parsed.follow_redirects is False
