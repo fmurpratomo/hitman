@@ -62,3 +62,27 @@ def test_startup_reports_the_resolved_database_path(tmp_path, capsys, monkeypatc
     cli.main()
     printed = capsys.readouterr().out
     assert str(Path(db).resolve()) in printed
+
+
+def test_the_package_is_runnable_with_python_dash_m():
+    """`python3 -m hitman` is the no-install path; keep the entry point alive."""
+    import importlib.util
+
+    spec = importlib.util.find_spec("hitman.__main__")
+    assert spec is not None
+
+
+def test_requirements_txt_matches_pyproject():
+    """Two dependency lists drift. Fail loudly rather than silently."""
+    import re
+    from pathlib import Path
+
+    def names(text):
+        found = re.findall(r"^\s*[\"']?([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?[><=]", text, re.M)
+        return {n.lower() for n in found}
+
+    pyproject = Path("pyproject.toml").read_text()
+    # Close on "\n]", not "]": an extra like uvicorn[standard] contains one.
+    block = pyproject.split("dependencies = [")[1].split("\n]")[0]
+    requirements = Path("requirements.txt").read_text()
+    assert names(block) == names(requirements)

@@ -1,0 +1,9 @@
+# Runtime dependencies, for `pip install -r requirements.txt`.
+# Kept in step with pyproject.toml, for environments where installing the
+# project itself (which needs a build backend) is more friction than it is
+# worth. Python 3.9 or newer.
+fastapi>=0.115
+uvicorn[standard]>=0.32
+jinja2>=3.1
+httpx>=0.28
+python-multipart>=0.0.20

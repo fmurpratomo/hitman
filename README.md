@@ -6,19 +6,29 @@ history of everything you sent.
 
 ## Running
 
-```bash
-uv sync
-uv run hitman
-```
-
 Needs **Python 3.9 or newer** — the version already on your machine if you are
 on macOS or most Linux distributions, so no CPython install is required. Any
 stdlib newer than 3.9 is deliberately avoided for that reason.
 
-Without `uv`, a plain virtualenv works the same way:
+### With python3 only
+
+Nothing but the interpreter and `pip`. No `uv`, no build backend, no admin
+rights, and the project itself is never installed — it runs from the checkout:
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e . && .venv/bin/hitman
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m hitman
+```
+
+Every later run is just the last line. Flags work the same:
+`.venv/bin/python -m hitman --port 9000 --no-browser`.
+
+### With uv
+
+```bash
+uv sync
+uv run hitman
 ```
 
 Opens <http://127.0.0.1:8765>. Use `--port` for a different port, `--db` for a
