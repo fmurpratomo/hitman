@@ -81,7 +81,9 @@ class CurlEngine:
         started = time.perf_counter()
         try:
             try:
-                completed = subprocess.run(argv, capture_output=True, timeout=request.timeout + 5)
+                completed = subprocess.run(
+                    argv, capture_output=True, timeout=request.timeout + 5, check=False
+                )
             except FileNotFoundError:
                 return Response(
                     engine=self.name,

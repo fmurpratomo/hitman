@@ -1,0 +1,33 @@
+{% if response.error %}
+<div class="status-line error">
+  <span class="badge err">Failed</span>
+  <span class="message">{{ response.error }}</span>
+  {% if response.curl_exit_code %}<span class="ms">curl exit {{ response.curl_exit_code }}</span>{% endif %}
+  <span class="ms">{{ response.elapsed_ms | round | int }}ms</span>
+  <span class="engine">via {{ response.engine }}</span>
+</div>
+{% else %}
+<div class="status-line">
+  <span class="badge s{{ (response.status or 0) // 100 }}">{{ response.status }} {{ response.reason }}</span>
+  <span class="ms">{{ response.elapsed_ms | round | int }}ms</span>
+  <span class="size">{{ response.size_bytes }} B</span>
+  <span class="engine">via {{ response.engine }}</span>
+  {% if response.body_truncated %}<span class="warn">body truncated for display</span>{% endif %}
+</div>
+
+<nav class="tabs" data-tabs="response">
+  <button type="button" data-tab="pretty" class="active">Pretty</button>
+  <button type="button" data-tab="raw">Raw</button>
+  <button type="button" data-tab="resp-headers">Headers ({{ response.headers | length }})</button>
+</nav>
+
+<div data-panel="pretty" class="panel"><pre>{{ pretty }}</pre></div>
+<div data-panel="raw" class="panel" hidden><pre>{{ response.body }}</pre></div>
+<div data-panel="resp-headers" class="panel" hidden>
+  <table class="headers">
+    {% for key, value in response.headers %}
+    <tr><th>{{ key }}</th><td>{{ value }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}

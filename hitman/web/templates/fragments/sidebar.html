@@ -1,0 +1,40 @@
+<nav class="tabs" data-tabs="sidebar">
+  <button type="button" data-tab="history" class="active">History</button>
+  <button type="button" data-tab="saved">Saved</button>
+</nav>
+
+<div data-panel="history" class="panel list">
+  {% for entry in history %}
+  <button type="button" class="entry" data-action="get" data-url="/history/{{ entry.id }}" data-target="#builder">
+    <span class="verb">{{ entry.request.method }}</span>
+    <span class="url">{{ entry.request.url }}</span>
+    {% if entry.response.error %}
+    <span class="badge err">ERR</span>
+    {% else %}
+    <span class="badge s{{ (entry.response.status or 0) // 100 }}">{{ entry.response.status }}</span>
+    <span class="ms">{{ entry.response.elapsed_ms | round | int }}ms</span>
+    {% endif %}
+  </button>
+  {% else %}
+  <p class="empty">Nothing sent yet.</p>
+  {% endfor %}
+  {% if history %}
+  <button type="button" class="danger" data-action="delete" data-url="/history"
+          data-target="#sidebar" data-confirm="Clear all history?">Clear history</button>
+  {% endif %}
+</div>
+
+<div data-panel="saved" class="panel list" hidden>
+  {% for item in saved %}
+  <div class="entry-row">
+    <button type="button" class="entry" data-action="get" data-url="/requests/{{ item.id }}" data-target="#builder">
+      <span class="verb">{{ item.request.method }}</span>
+      <span class="name">{{ item.name }}</span>
+    </button>
+    <button type="button" class="delete" data-action="delete" data-url="/requests/{{ item.id }}"
+            data-target="#sidebar" aria-label="Delete {{ item.name }}">&times;</button>
+  </div>
+  {% else %}
+  <p class="empty">No saved requests.</p>
+  {% endfor %}
+</div>

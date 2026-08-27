@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="topbar">
+  <h1>Hitman</h1>
+  <div class="toolbar">
+    <button type="button" id="import-curl-open">Import curl</button>
+    <button type="button" id="copy-curl">Copy as curl</button>
+  </div>
+</header>
+
+<main class="layout">
+  <aside id="sidebar">{% include "fragments/sidebar.html" %}</aside>
+  <section class="centre">
+    <div id="builder">{% include "fragments/builder.html" %}</div>
+    <div id="response">
+      <p class="empty">No response yet. Fill in a URL and press Send.</p>
+    </div>
+  </section>
+</main>
+
+<dialog id="import-dialog">
+  <form method="dialog">
+    <h2>Import a curl command</h2>
+    <textarea id="curl-text" rows="8" placeholder="curl https://api.example.com/users -H 'Accept: application/json'"></textarea>
+    <menu>
+      <button value="cancel">Cancel</button>
+      <button type="button" id="import-curl-submit">Import</button>
+    </menu>
+  </form>
+</dialog>
+{% endblock %}

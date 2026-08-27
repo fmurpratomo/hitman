@@ -1,0 +1,25 @@
+{% macro kv_table(prefix, rows, key_hint, value_hint) %}
+<div class="kv" data-prefix="{{ prefix }}">
+  <div class="rows">
+    {% for row in rows %}
+    <div class="row">
+      <input type="hidden" name="{{ prefix }}_enabled" value="{{ '1' if row.enabled else '0' }}">
+      <input type="checkbox" class="toggle" {% if row.enabled %}checked{% endif %} aria-label="Enabled">
+      <input type="text" name="{{ prefix }}_key" value="{{ row.key }}" placeholder="{{ key_hint }}">
+      <input type="text" name="{{ prefix }}_value" value="{{ row.value }}" placeholder="{{ value_hint }}">
+      <button type="button" class="remove" aria-label="Remove row">&times;</button>
+    </div>
+    {% endfor %}
+  </div>
+  <button type="button" class="add-row">+ Add</button>
+  <template class="row-template">
+    <div class="row">
+      <input type="hidden" name="{{ prefix }}_enabled" value="1">
+      <input type="checkbox" class="toggle" checked aria-label="Enabled">
+      <input type="text" name="{{ prefix }}_key" placeholder="{{ key_hint }}">
+      <input type="text" name="{{ prefix }}_value" placeholder="{{ value_hint }}">
+      <button type="button" class="remove" aria-label="Remove row">&times;</button>
+    </div>
+  </template>
+</div>
+{% endmacro %}

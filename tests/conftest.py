@@ -61,10 +61,17 @@ class _Handler(BaseHTTPRequestHandler):
     do_POST = do_PUT = do_PATCH = do_DELETE = _echo
 
 
+class _QuietServer(ThreadingHTTPServer):
+    """Swallow the broken-pipe traceback the timeout test provokes."""
+
+    def handle_error(self, request, client_address):
+        pass
+
+
 @pytest.fixture(scope="session")
 def fixture_server():
     """A real HTTP server on a random loopback port."""
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    server = _QuietServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield f"http://127.0.0.1:{server.server_port}"

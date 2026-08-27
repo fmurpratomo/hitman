@@ -16,11 +16,11 @@ def make_request(url="http://localhost:3000/api"):
 
 
 def make_response(**kwargs):
-    defaults = dict(
-        engine="httpx", status=200, reason="OK",
-        headers=[("Content-Type", "application/json")],
-        body='{"ok": true}', size_bytes=12, elapsed_ms=42.5,
-    )
+    defaults = {
+        "engine": "httpx", "status": 200, "reason": "OK",
+        "headers": [("Content-Type", "application/json")],
+        "body": '{"ok": true}', "size_bytes": 12, "elapsed_ms": 42.5,
+    }
     return Response(**{**defaults, **kwargs})
 
 

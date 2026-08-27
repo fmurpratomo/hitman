@@ -10,7 +10,7 @@ import json
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from hitman.core.models import Request, Response, normalize
@@ -66,7 +66,7 @@ class HistoryEntry:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 class Store:

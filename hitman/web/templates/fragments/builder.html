@@ -1,0 +1,72 @@
+{% from "fragments/_macros.html" import kv_table %}
+{% if warnings %}
+<ul class="warnings">
+  {% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}
+</ul>
+{% endif %}
+<form id="request-form">
+  <div class="urlbar">
+    <select name="method" aria-label="HTTP method">
+      {% for verb in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] %}
+      <option value="{{ verb }}" {% if req.method == verb %}selected{% endif %}>{{ verb }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="url" value="{{ req.url }}" placeholder="http://localhost:3000/api/users" autocomplete="off">
+    <button type="button" class="primary" data-action="post" data-url="/send"
+            data-form="#request-form" data-vals='{"engine": "httpx"}'
+            data-target="#response">Send</button>
+    <button type="button" data-action="post" data-url="/send"
+            data-form="#request-form" data-vals='{"engine": "curl"}'
+            data-target="#response"
+            {% if not curl_available %}disabled title="The curl binary was not found on this system"{% endif %}>
+      Send with curl
+    </button>
+  </div>
+
+  <nav class="tabs" data-tabs="builder">
+    <button type="button" data-tab="params" class="active">Params</button>
+    <button type="button" data-tab="headers">Headers</button>
+    <button type="button" data-tab="body">Body</button>
+    <button type="button" data-tab="options">
+      Options{% if not req.follow_redirects or not req.verify_tls or req.timeout != 30.0 %} <span class="dot">&bull;</span>{% endif %}
+    </button>
+  </nav>
+
+  <div data-panel="params" class="panel">{{ kv_table("param", req.params, "name", "value") }}</div>
+  <div data-panel="headers" class="panel" hidden>{{ kv_table("header", req.headers, "Header", "Value") }}</div>
+
+  <div data-panel="body" class="panel" hidden>
+    <select name="body_type" id="body-type">
+      {% for kind in ["none", "json", "raw", "form"] %}
+      <option value="{{ kind }}" {% if req.body_type == kind %}selected{% endif %}>{{ kind }}</option>
+      {% endfor %}
+    </select>
+    <button type="button" id="format-json">Format JSON</button>
+    <div id="body-text" {% if req.body_type in ("none", "form") %}hidden{% endif %}>
+      <textarea name="body" rows="12" spellcheck="false">{{ req.body }}</textarea>
+    </div>
+    <div id="body-form" {% if req.body_type != "form" %}hidden{% endif %}>
+      {{ kv_table("field", req.form_fields, "field", "value") }}
+    </div>
+  </div>
+
+  <div data-panel="options" class="panel" hidden>
+    <label>
+      <input type="hidden" name="follow_redirects" value="{{ '1' if req.follow_redirects else '0' }}">
+      <input type="checkbox" class="toggle" {% if req.follow_redirects %}checked{% endif %}> Follow redirects
+    </label>
+    <label>
+      <input type="hidden" name="verify_tls" value="{{ '1' if req.verify_tls else '0' }}">
+      <input type="checkbox" class="toggle" {% if req.verify_tls %}checked{% endif %}> Verify TLS certificates
+    </label>
+    <label>Timeout (seconds)
+      <input type="number" name="timeout" value="{{ req.timeout }}" min="0.1" max="600" step="0.1">
+    </label>
+  </div>
+
+  <div class="save-row">
+    <input type="text" id="save-name" name="save_name" placeholder="Name this request" autocomplete="off">
+    <button type="button" id="save-request" data-action="post" data-url="/requests"
+            data-form="#request-form" data-target="#sidebar">Save</button>
+  </div>
+</form>
