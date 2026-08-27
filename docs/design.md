@@ -78,7 +78,7 @@ hitman/
 │   ├── curl_import.py      # curl command text -> Request
 │   ├── curl_export.py      # Request -> argv list / display string
 │   ├── engines/
-│   │   ├── base.py         # Engine protocol
+│   │   ├── base.py         # shared response-body decoding
 │   │   ├── httpx_engine.py
 │   │   └── curl_engine.py
 │   └── store.py            # SQLite: history + saved requests
@@ -194,8 +194,6 @@ CREATE TABLE IF NOT EXISTS history (
   response_body         TEXT,
   created_at            TEXT NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_history_created ON history(created_at DESC);
 ```
 
 The request is stored as a single JSON column rather than spread across
@@ -210,14 +208,12 @@ All queries use parameter binding. No string-formatted SQL.
 
 ## 7. Send engines
 
-Both engines implement the same interface and return the same `Response`
-shape, so the UI does not branch on which one ran:
-
-```python
-class Engine(Protocol):
-    name: str
-    def send(self, request: Request) -> Response: ...
-```
+Both engines expose the same `send(request) -> Response` method and return
+the same `Response` shape, so the UI does not branch on which one ran. The
+contract is enforced by `tests/core/test_engine_parity.py`, which runs every
+case through both engines and asserts they agree — a behavioural check that
+is stronger than a `Protocol` declaration, which is why no such declaration
+exists in the code.
 
 Neither engine raises for network failures. A failure becomes a `Response`
 with `error` set and `status=None`. Only programming errors propagate.
@@ -283,7 +279,7 @@ Flags translated into the `Request`:
 | `-d`, `--data`, `--data-raw`, `--data-binary`, `--data-ascii` | body; implies POST when no `-X` |
 | `-F`, `--form` | `form_fields` entry (see multipart note below) |
 | `-u`, `--user` | encoded into an `Authorization: Basic` header |
-| `-L`, `--location` | `follow_redirects = True` |
+| `-L`, `--location` | `follow_redirects = True` (import starts from `False`, since curl does not follow redirects without `-L`) |
 | `-k`, `--insecure` | `verify_tls = False` |
 | `-A`, `--user-agent` | `User-Agent` header |
 | `-b`, `--cookie` | `Cookie` header |
@@ -436,10 +432,11 @@ Test-driven: tests are written before the implementation of each unit.
 |---|---|
 | `test_curl_import.py` | table-driven over real commands: Chrome "Copy as cURL", multi-line with `\`, repeated `-H`, `--data-raw`, `-u`, `-F`, `--compressed`, `-G`, unknown flags produce warnings, malformed input raises `CurlParseError` |
 | `test_curl_export.py` | argv correctness, quoting of values containing spaces/quotes, conditional `-X`/`-L`/`--max-time` |
-| `test_roundtrip.py` | `parse(export(r)) == r` across a corpus of requests |
-| `test_engines.py` | both engines against a local fixture server: status codes, headers, JSON and binary bodies, redirects, timeout, connection refused on a closed port |
+| `test_curl_export.py` (same file) | the round-trip property `parse(export(r)) == normalize(r)` across a corpus of requests |
+| `test_httpx_engine.py`, `test_curl_engine.py` | each engine against a local fixture server: status codes, headers, JSON and binary bodies, redirects, timeout, connection refused on a closed port |
+| `test_engine_parity.py` | every case through *both* engines, asserting identical status, body, and sent Content-Type |
 | `test_store.py` | save/load/update/delete, history insert and 500-row trim, body cap |
-| `test_routes.py` | FastAPI `TestClient`: send, import, export, save, replay; and an escaping test asserting a `<script>` response body is escaped in the rendered fragment |
+| `test_index.py`, `test_send.py`, `test_curl_routes.py`, `test_library.py` | FastAPI `TestClient`: send, import, export, save, replay; and an escaping test asserting a `<script>` response body is escaped in the rendered fragment |
 
 The fixture server is a real threaded `http.server` on an ephemeral port,
 not a mock — the curl engine is a subprocess and cannot be intercepted by
@@ -476,3 +473,25 @@ Enabled by, but not part of, this design:
 - Auth helper forms — pure UI sugar over the existing headers list.
 - Postman collection import/export — a converter module in `core`.
 - A `hitman send` CLI reusing `core` with no changes.
+
+## 15. Corrections made during implementation
+
+Three defects in this design were found by the tests it specifies, and the
+design as built differs from the text above in these ways:
+
+1. **`ensure_scheme` used a substring test.** `"://" in url` left
+   `api.example.com/cb?to=http://x.test/` unprefixed, so `urlsplit` returned
+   an empty host and folded the real one into the path. The check is now
+   anchored with `re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url)`.
+
+2. **`follow_redirects` did not survive a round trip.** `Request` defaults to
+   following redirects, but curl does not follow them without `-L`, so
+   exporting a non-following request and re-importing it produced a following
+   one. `parse_curl` now starts from `follow_redirects=False`, matching curl.
+   Caught by the round-trip property test.
+
+3. **A missing form field disabled TLS verification.** `request_from_form`
+   read `verify_tls` as `form.get(...) == "1"`, so an absent field meant
+   `False`. Both `verify_tls` and `follow_redirects` now default to on and
+   require an explicit `"0"` to disable — a dropped field must never weaken a
+   request.
