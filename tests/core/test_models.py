@@ -15,6 +15,12 @@ def test_ensure_scheme_leaves_explicit_scheme_alone():
     assert ensure_scheme("https://example.com") == "https://example.com"
 
 
+def test_ensure_scheme_prefixes_url_with_an_embedded_url_in_the_query():
+    assert ensure_scheme("api.example.com/cb?to=http://callback.test/hook") == (
+        "http://api.example.com/cb?to=http://callback.test/hook"
+    )
+
+
 def test_full_url_merges_enabled_params_only():
     request = Request(
         url="http://localhost:3000/api",
@@ -32,6 +38,11 @@ def test_full_url_repairs_scheme_less_url():
     # urlsplit() parses 'localhost' as a scheme, so this would otherwise break.
     request = Request(url="localhost:3000/api", params=[KeyValue("a", "1")])
     assert request.full_url() == "http://localhost:3000/api?a=1"
+
+
+def test_full_url_extracts_the_real_host_despite_an_embedded_url():
+    request = Request(url="api.example.com/cb?to=http://callback.test/hook")
+    assert request.full_url().startswith("http://api.example.com/cb")
 
 
 def test_effective_headers_materialises_json_content_type():

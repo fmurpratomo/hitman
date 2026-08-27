@@ -6,6 +6,7 @@ contract every other module speaks in.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -32,7 +33,7 @@ def ensure_scheme(url: str) -> str:
     and port extraction silently produce nonsense without this.
     """
     url = url.strip()
-    if not url or "://" in url:
+    if not url or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url):
         return url
     return "http://" + url
 
