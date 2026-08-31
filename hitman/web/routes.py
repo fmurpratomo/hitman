@@ -9,14 +9,22 @@ from fastapi import Request as HttpRequest
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from starlette.concurrency import run_in_threadpool
 
+from hitman.core.assertions import KINDS, OPS, blank_assertion
 from hitman.core.curl_export import to_command
 from hitman.core.curl_import import CurlParseError, parse_curl
 from hitman.core.engines.curl_engine import CurlEngine
 from hitman.core.engines.httpx_engine import HttpxEngine
 from hitman.core.models import KeyValue, Request, Response
+from hitman.core.scenarios import (
+    CAPTURE_SOURCES,
+    Capture,
+    Scenario,
+    Step,
+    run_scenario,
+)
 from hitman.core.variables import substitute
 from hitman.web.bodyview import pretty_lines
-from hitman.web.forms import request_from_form
+from hitman.web.forms import request_from_form, scenario_from_form
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -31,6 +39,17 @@ def render(http_request: HttpRequest, template: str, context: dict) -> HTMLRespo
         "history": store.list_history(50),
         "environments": store.list_environments(),
         "active_env": store.active_environment(),
+        "scenarios": store.list_scenarios(),
+        "runs": store.list_scenario_runs(20),
+        # Vocabulary and blank rows the scenario editor's macros need. They are
+        # constants, but the editor is assembled from macros that cannot import
+        # from core, so they arrive as context like everything else.
+        "assertion_kinds": KINDS,
+        "assertion_ops": OPS,
+        "capture_sources": CAPTURE_SOURCES,
+        "blank_assertion": blank_assertion(),
+        "blank_capture": Capture(),
+        "blank_step": Step(assertions=[blank_assertion()]),
         **context,
     }
     # Request-first signature: passing the context dict alone is deprecated.
@@ -156,6 +175,12 @@ async def save_request(http_request: HttpRequest):
     return render(http_request, "fragments/sidebar.html", {"req": outgoing})
 
 
+@router.get("/requests/new", response_class=HTMLResponse)
+def new_request(http_request: HttpRequest):
+    """An empty builder — the way back after the scenario editor took the pane."""
+    return render(http_request, "fragments/builder.html", {"req": Request(), "warnings": []})
+
+
 @router.get("/requests/{request_id}", response_class=HTMLResponse)
 def load_request(request_id: int, http_request: HttpRequest):
     saved = http_request.app.state.store.get_request(request_id)
@@ -279,3 +304,165 @@ async def set_active_environment(http_request: HttpRequest):
     raw = str(form.get("env_id") or "").strip()
     http_request.app.state.store.set_active_environment(int(raw) if raw.isdigit() else None)
     return render(http_request, "fragments/envbar.html", {})
+
+
+# --- scenarios ----------------------------------------------------------
+#
+# Route order matters twice here: "/scenarios/new" and "/scenarios/runs" would
+# both be swallowed by "/scenarios/{scenario_id}", which is typed int and so
+# would 422 rather than fall through to the right handler.
+
+
+def _run(http_request: HttpRequest, scenario: Scenario, scenario_id, engine_name: str):
+    """Run a scenario and record it. Blocking — call through a threadpool."""
+    store = http_request.app.state.store
+    engine = _engine(engine_name)
+    environment = store.active_environment()
+
+    result = run_scenario(
+        scenario,
+        # get_request returns a SavedRequest, which carries both the name the
+        # report labels the step with and the request itself.
+        lookup=store.get_request,
+        send=engine.send,
+        variables=environment.as_mapping() if environment else {},
+        engine_name=engine.name,
+        environment=environment.name if environment else "",
+    )
+
+    notes = []
+    run_id = None
+    try:
+        run_id = store.add_scenario_run(scenario_id, result)
+    except Exception as exc:  # noqa: BLE001 - the run itself is what matters
+        # The requests have already gone out. Losing the stored record must not
+        # cost the user the report they waited for.
+        log.warning("Could not write scenario run: %s", exc)
+        notes.append(f"Run not saved: {exc}")
+    return result, run_id, notes
+
+
+def _report(http_request: HttpRequest, result, run_id, notes) -> HTMLResponse:
+    return render(
+        http_request,
+        "fragments/run_with_sidebar.html",
+        {"result": result, "run_id": run_id, "notes": notes},
+    )
+
+
+@router.get("/scenarios", response_class=HTMLResponse)
+def scenario_list(http_request: HttpRequest):
+    return render(http_request, "fragments/sidebar.html", {"req": Request()})
+
+
+@router.get("/scenarios/new", response_class=HTMLResponse)
+def new_scenario_form(http_request: HttpRequest):
+    return render(
+        http_request,
+        "fragments/scenario_editor.html",
+        {"scenario": Scenario(), "current": None},
+    )
+
+
+@router.get("/scenarios/runs/{run_id}", response_class=HTMLResponse)
+def load_run(run_id: int, http_request: HttpRequest):
+    run = http_request.app.state.store.get_scenario_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return render(
+        http_request,
+        "fragments/run_report.html",
+        {"result": run.result, "run_id": run.id, "notes": []},
+    )
+
+
+@router.delete("/scenarios/runs", response_class=HTMLResponse)
+def clear_runs(http_request: HttpRequest):
+    http_request.app.state.store.clear_scenario_runs()
+    return render(http_request, "fragments/sidebar.html", {"req": Request()})
+
+
+@router.get("/scenarios/{scenario_id}", response_class=HTMLResponse)
+def load_scenario(scenario_id: int, http_request: HttpRequest):
+    saved = http_request.app.state.store.get_scenario(scenario_id)
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return render(
+        http_request,
+        "fragments/scenario_editor.html",
+        {"scenario": saved.scenario, "current": saved},
+    )
+
+
+@router.post("/scenarios", response_class=HTMLResponse)
+async def create_scenario(http_request: HttpRequest):
+    store = http_request.app.state.store
+    scenario = scenario_from_form(await http_request.form())
+    scenario_id = store.save_scenario(scenario)
+    # The editor comes back bound to the new id, so the next click is Update
+    # rather than a second copy.
+    return render(
+        http_request,
+        "fragments/scenario_with_sidebar.html",
+        {"scenario": scenario, "current": store.get_scenario(scenario_id)},
+    )
+
+
+@router.put("/scenarios/{scenario_id}", response_class=HTMLResponse)
+async def update_scenario(scenario_id: int, http_request: HttpRequest):
+    store = http_request.app.state.store
+    if store.get_scenario(scenario_id) is None:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    scenario = scenario_from_form(await http_request.form())
+    store.update_scenario(scenario_id, scenario)
+    return render(
+        http_request,
+        "fragments/scenario_with_sidebar.html",
+        {"scenario": scenario, "current": store.get_scenario(scenario_id)},
+    )
+
+
+@router.post("/scenarios/{scenario_id}/duplicate", response_class=HTMLResponse)
+def duplicate_scenario(scenario_id: int, http_request: HttpRequest):
+    if http_request.app.state.store.duplicate_scenario(scenario_id) is None:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return render(http_request, "fragments/sidebar.html", {"req": Request()})
+
+
+@router.delete("/scenarios/{scenario_id}", response_class=HTMLResponse)
+def delete_scenario(scenario_id: int, http_request: HttpRequest):
+    http_request.app.state.store.delete_scenario(scenario_id)
+    return render(http_request, "fragments/sidebar.html", {"req": Request()})
+
+
+@router.post("/scenarios/run", response_class=HTMLResponse)
+async def run_from_form(http_request: HttpRequest):
+    """Run exactly what is on screen, saved or not, so editing can iterate."""
+    form = await http_request.form()
+    scenario = scenario_from_form(form)
+    raw_id = str(form.get("scenario_id") or "").strip()
+    scenario_id = int(raw_id) if raw_id.isdigit() else None
+    engine_name = str(form.get("engine") or "httpx")
+
+    result, run_id, notes = await run_in_threadpool(
+        _run, http_request, scenario, scenario_id, engine_name
+    )
+    return _report(http_request, result, run_id, notes)
+
+
+@router.post("/scenarios/{scenario_id}/run", response_class=HTMLResponse)
+async def run_saved_scenario(scenario_id: int, http_request: HttpRequest):
+    """Run the stored scenario, for the play button in the sidebar."""
+    form = await http_request.form()
+    saved = http_request.app.state.store.get_scenario(scenario_id)
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+
+    result, run_id, notes = await run_in_threadpool(
+        _run,
+        http_request,
+        saved.scenario,
+        scenario_id,
+        str(form.get("engine") or "httpx"),
+    )
+    return _report(http_request, result, run_id, notes)

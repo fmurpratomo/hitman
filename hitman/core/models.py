@@ -31,9 +31,16 @@ def ensure_scheme(url: str) -> str:
     Required, not defensive: ``urlsplit("localhost:3000/api")`` parses
     ``localhost`` as the URL *scheme* and ``8931/api`` as the path, so host
     and port extraction silently produce nonsense without this.
+
+    A URL that *starts* with a placeholder is left alone, because whether it
+    needs a scheme is not knowable yet: ``{{base_url}}/users`` against
+    ``base_url = http://localhost:3000`` would otherwise be stored as
+    ``http://{{base_url}}/users`` and sent to ``http://http://localhost:3000``.
+    The resolved URL passes back through here on its way to the engine, so a
+    variable holding a bare host still gets its scheme.
     """
     url = url.strip()
-    if not url or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url):
+    if not url or url.startswith("{{") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url):
         return url
     return "http://" + url
 
@@ -128,6 +135,26 @@ class Response:
     content_type: str = ""
     error: str | None = None
     curl_exit_code: int | None = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Response:
+        return cls(
+            engine=data.get("engine", ""),
+            status=data.get("status"),
+            reason=data.get("reason", ""),
+            # JSON has no tuples; restore them so two Responses compare equal.
+            headers=[tuple(pair) for pair in data.get("headers") or []],
+            body=data.get("body", ""),
+            body_truncated=data.get("body_truncated", False),
+            size_bytes=data.get("size_bytes", 0),
+            elapsed_ms=data.get("elapsed_ms", 0.0),
+            content_type=data.get("content_type", ""),
+            error=data.get("error"),
+            curl_exit_code=data.get("curl_exit_code"),
+        )
 
 
 def normalize(request: Request) -> Request:

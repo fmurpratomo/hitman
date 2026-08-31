@@ -21,6 +21,24 @@ def test_ensure_scheme_prefixes_url_with_an_embedded_url_in_the_query():
     )
 
 
+def test_ensure_scheme_leaves_a_leading_placeholder_alone():
+    """The variable may carry the scheme, so prefixing here doubles it up."""
+    assert ensure_scheme("{{base_url}}/users") == "{{base_url}}/users"
+
+
+def test_ensure_scheme_still_prefixes_a_placeholder_used_as_a_path():
+    assert ensure_scheme("localhost:3000/{{path}}") == "http://localhost:3000/{{path}}"
+
+
+def test_normalize_keeps_a_templated_url_sendable():
+    """Saving is what applies normalize, and a saved request must still run.
+
+    Stored as http://{{base_url}}/users, this resolved to
+    http://http://localhost:3000/users the moment an environment was applied.
+    """
+    assert normalize(Request(url="{{base_url}}/users")).url == "{{base_url}}/users"
+
+
 def test_full_url_merges_enabled_params_only():
     request = Request(
         url="http://localhost:3000/api",

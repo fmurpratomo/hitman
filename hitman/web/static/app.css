@@ -92,3 +92,52 @@ code { background: var(--line); padding: 1px 5px; border-radius: 4px; }
   padding: 6px 6px; line-height: 1; }
 .entry-row .icon:hover { color: var(--text); }
 .entry-row .icon.delete:hover { color: var(--err); }
+
+/* --- scenario editor --- */
+input.wide, button.wide { width: 100%; }
+#scenario-form input[name="scenario_name"] { flex: 1; }
+#scenario-form input.wide { margin-bottom: 8px; }
+/* Step numbers come from a CSS counter so reordering, adding and deleting a
+   step never has to renumber anything in the markup. */
+.steps { counter-reset: step; }
+.step { counter-increment: step; border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; margin-bottom: 8px; background: rgba(255,255,255,.015); }
+.step-head { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.step-head::before { content: counter(step); color: var(--muted); font-size: 12px;
+  min-width: 16px; text-align: right; }
+.step-head select[name="step_request_id"] { flex: 2; min-width: 0; }
+.step-head input[name="step_name"] { flex: 1; min-width: 0; }
+.step .kv .row { margin-bottom: 4px; }
+.kv.checks .row { grid-template-columns: auto auto 1fr auto 1fr auto; }
+.kv.captures .row { grid-template-columns: auto 1fr auto 1fr auto; }
+.step .add-row { background: none; border: none; color: var(--accent); padding: 2px 4px;
+  font-size: 12px; }
+.captures-box > summary { cursor: pointer; color: var(--muted); font-size: 12px;
+  padding: 4px 0; }
+#add-step { margin-top: 4px; }
+.side-heading { color: var(--muted); font-size: 11px; letter-spacing: .06em;
+  text-transform: uppercase; margin: 14px 0 4px 6px; }
+.entry-row .icon.run { color: var(--ok); }
+
+/* --- run report --- */
+.run-steps { list-style: none; counter-reset: run; margin: 0; padding: 0; }
+.run-step { counter-increment: run; border-left: 2px solid var(--line);
+  padding: 6px 0 6px 10px; margin-bottom: 8px; }
+.run-step.passed { border-left-color: var(--ok); }
+.run-step.failed { border-left-color: var(--err); }
+.run-step.skipped { opacity: .6; }
+.run-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.run-head::before { content: counter(run); color: var(--muted); font-size: 12px; }
+.run-head .url { color: var(--muted); word-break: break-all; }
+.run-error { color: var(--err); margin: 4px 0; }
+.checks { list-style: none; margin: 4px 0; padding: 0; font-size: 13px; }
+.checks li { padding: 1px 0; }
+.checks .tick { display: inline-block; min-width: 14px; }
+.checks li.ok .tick { color: var(--ok); }
+.checks li.bad { color: var(--err); }
+.checks li.bad .tick { color: var(--err); }
+.checks .label { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.captured { margin: 4px 0; font-size: 13px; color: var(--muted); word-break: break-all; }
+.run-body { margin: 6px 0; }
+.run-body > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.run-body pre { max-height: 40vh; overflow: auto; }

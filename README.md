@@ -90,9 +90,61 @@ Variables are resolved just before the request is sent, so:
 
 Environment values live in the same database as your headers, in plain text.
 
+## Scenarios
+
+A scenario runs saved requests **in order** and checks each response — the
+**Tests** tab in the sidebar. Each step picks a saved request and carries its
+own list of checks:
+
+| Check | Target | Example |
+|---|---|---|
+| `status` | — | `status eq 200`, `status lt 300` |
+| `json` | a path into the body | `json user.id exists`, `json roles.0 eq admin` |
+| `header` | a header name | `header Content-Type contains json` |
+| `body` | — | `body not contains error`, `body matches ^\{` |
+| `time_ms` | — | `time_ms lt 500` |
+
+JSON paths are dotted, with numeric indices for arrays: `data.items.0.id`, or
+`data.items[0].id` — the same thing. A leading `$` is allowed and ignored.
+
+Comparison is forgiving about types, because the expected value is typed into
+a text box and the actual one comes back from `json.loads`: `eq 200` matches
+the integer, `eq true` matches the boolean, and `contains` looks inside a JSON
+array rather than its text.
+
+### Chaining
+
+Sequence only matters if a step can use what the last one returned. **Capture
+into variables** binds a value out of a response to `{{name}}`, and every later
+step sees it:
+
+1. `POST {{base_url}}/login` — capture `token` from the JSON path `token`.
+2. `GET {{base_url}}/me` with a header `Authorization: Bearer {{token}}`.
+
+Captures use the same machinery as environments, so a captured value and an
+environment variable are referenced identically, and a capture shadows an
+environment variable of the same name for the rest of the run. A capture that
+finds nothing **fails its step** rather than warning: left as a warning, the
+next request sends the literal text `{{token}}` and fails somewhere far away
+from the actual cause.
+
+### Running
+
+- **Run** runs what is on screen, saved or not, so you can iterate. The **&#9658;**
+  button in the sidebar runs the *stored* scenario instead.
+- A failing step **stops the run** by default and the rest are marked skipped,
+  since a chained step usually cannot work without the one before it. Switch to
+  *Run every step* when the steps are independent.
+- Runs go through either engine, use the active environment, and are kept —
+  the last 100 — with the full request and response of every step.
+- Scenario sends are **not** written to the send history. The run report
+  already holds every request and response, and a twenty-step scenario would
+  otherwise flush the history you were keeping by hand.
+
 ## Not supported yet
 
-Auth helper forms, Postman collection import/export, multipart file upload.
+Auth helper forms, Postman collection import/export, multipart file upload,
+running a scenario from the command line.
 
 ## Development
 

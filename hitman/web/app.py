@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from hitman.core.engines.curl_engine import curl_available
 from hitman.core.store import Store
+from hitman.web.bodyview import pretty_lines
 
 BASE_DIR = Path(__file__).parent
 DEFAULT_DB = os.environ.get("HITMAN_DB", "data/hitman.db")
@@ -28,6 +29,9 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     # Jinja2Templates enables autoescape for .html by default. Response bodies
     # are attacker-controlled; do not turn it off.
     app.state.templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+    # A display helper, not markup: the run report shows a body per step and
+    # cannot precompute one list per step in the route.
+    app.state.templates.env.globals["pretty_lines"] = pretty_lines
     app.state.curl_available = curl_available()
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 

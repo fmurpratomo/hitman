@@ -1,6 +1,7 @@
 <nav class="tabs" data-tabs="sidebar">
   <button type="button" data-tab="history" class="active">History</button>
   <button type="button" data-tab="saved">Saved</button>
+  <button type="button" data-tab="scenarios">Tests</button>
 </nav>
 
 <div data-panel="history" class="panel list">
@@ -52,4 +53,49 @@
   {% else %}
   <p class="empty">No saved requests.</p>
   {% endfor %}
+</div>
+
+<div data-panel="scenarios" class="panel list" hidden>
+  <button type="button" class="wide" data-action="get" data-url="/scenarios/new"
+          data-target="#builder">+ New scenario</button>
+
+  {% for item in scenarios %}
+  <div class="entry-row">
+    <button type="button" class="icon run" data-action="post"
+            data-url="/scenarios/{{ item.id }}/run" data-target="#response"
+            title="Run {{ item.scenario.name }}"
+            aria-label="Run {{ item.scenario.name }}">&#9658;</button>
+    <button type="button" class="entry" data-action="get" data-url="/scenarios/{{ item.id }}"
+            data-target="#builder">
+      <span class="name">{{ item.scenario.name }}</span>
+      <span class="muted">{{ item.scenario.steps | length }}</span>
+    </button>
+    <button type="button" class="icon" data-action="post"
+            data-url="/scenarios/{{ item.id }}/duplicate" data-target="#sidebar"
+            title="Duplicate {{ item.scenario.name }}"
+            aria-label="Duplicate {{ item.scenario.name }}">&#10697;</button>
+    <button type="button" class="icon delete" data-action="delete"
+            data-url="/scenarios/{{ item.id }}" data-target="#sidebar"
+            data-confirm="Delete the scenario {{ item.scenario.name }}?"
+            title="Delete {{ item.scenario.name }}"
+            aria-label="Delete {{ item.scenario.name }}">&times;</button>
+  </div>
+  {% else %}
+  <p class="empty">No scenarios yet. A scenario runs saved requests in order and
+    checks each response.</p>
+  {% endfor %}
+
+  {% if runs %}
+  <h3 class="side-heading">Recent runs</h3>
+  {% for run in runs %}
+  <button type="button" class="entry" data-action="get"
+          data-url="/scenarios/runs/{{ run.id }}" data-target="#response">
+    <span class="badge {{ 's2' if run.passed else 'err' }}">{{ 'PASS' if run.passed else 'FAIL' }}</span>
+    <span class="name">{{ run.result.name }}</span>
+    <span class="ms">{{ run.result.count('passed') }}/{{ run.result.steps | length }}</span>
+  </button>
+  {% endfor %}
+  <button type="button" class="danger" data-action="delete" data-url="/scenarios/runs"
+          data-target="#sidebar" data-confirm="Clear all run results?">Clear runs</button>
+  {% endif %}
 </div>

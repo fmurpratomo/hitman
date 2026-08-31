@@ -9,16 +9,22 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from hitman.core.models import KeyValue, Request, Response, normalize
+from hitman.core.scenarios import Scenario, ScenarioResult
 
 ACTIVE_ENVIRONMENT = "active_environment"
 
 HISTORY_LIMIT = 500
 STORED_BODY_LIMIT = 256 * 1024
+
+# A run stores a full response per step, so it is capped harder than history
+# and kept for fewer entries: twenty steps of 256 KB is a 5 MB row.
+SCENARIO_RUN_LIMIT = 100
+RUN_BODY_LIMIT = 64 * 1024
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS saved_requests (
@@ -43,6 +49,29 @@ CREATE TABLE IF NOT EXISTS environments (
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS scenarios (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL,
+  scenario_json TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS scenario_runs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario_id   INTEGER,
+  name          TEXT NOT NULL,
+  engine        TEXT NOT NULL,
+  environment   TEXT NOT NULL DEFAULT '',
+  passed        INTEGER NOT NULL,
+  passed_count  INTEGER NOT NULL DEFAULT 0,
+  failed_count  INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  elapsed_ms    REAL,
+  result_json   TEXT NOT NULL,
+  created_at    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS history (
@@ -85,6 +114,30 @@ class Environment:
     def as_mapping(self) -> dict[str, str]:
         """Enabled variables only — a disabled row is not defined."""
         return {row.key: row.value for row in self.variables if row.enabled and row.key}
+
+
+@dataclass
+class SavedScenario:
+    id: int
+    scenario: Scenario
+    created_at: str
+    updated_at: str
+
+    @property
+    def name(self) -> str:
+        return self.scenario.name
+
+
+@dataclass
+class ScenarioRun:
+    id: int
+    scenario_id: int | None
+    result: ScenarioResult
+    created_at: str
+
+    @property
+    def passed(self) -> bool:
+        return self.result.passed
 
 
 @dataclass
@@ -279,6 +332,115 @@ class Store:
         # The row may point at an environment deleted by another route.
         return self.get_environment(int(row["value"]))
 
+    # --- scenarios ------------------------------------------------------
+
+    def save_scenario(self, scenario: Scenario) -> int:
+        stamp = _now()
+        with self._lock:
+            cursor = self._conn.execute(
+                "INSERT INTO scenarios (name, scenario_json, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?)",
+                (scenario.name, json.dumps(scenario.to_dict()), stamp, stamp),
+            )
+            self._conn.commit()
+            return int(cursor.lastrowid)
+
+    def update_scenario(self, scenario_id: int, scenario: Scenario) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE scenarios SET name = ?, scenario_json = ?, updated_at = ?"
+                " WHERE id = ?",
+                (scenario.name, json.dumps(scenario.to_dict()), _now(), scenario_id),
+            )
+            self._conn.commit()
+
+    def get_scenario(self, scenario_id: int) -> SavedScenario | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM scenarios WHERE id = ?", (scenario_id,)
+            ).fetchone()
+        return _row_to_scenario(row) if row else None
+
+    def list_scenarios(self) -> list[SavedScenario]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM scenarios ORDER BY name").fetchall()
+        return [_row_to_scenario(row) for row in rows]
+
+    def delete_scenario(self, scenario_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM scenarios WHERE id = ?", (scenario_id,))
+            # Past runs outlive the scenario: they are a record of what
+            # happened, and losing them would rewrite history. Only the link
+            # back to a scenario that no longer exists is cleared.
+            self._conn.execute(
+                "UPDATE scenario_runs SET scenario_id = NULL WHERE scenario_id = ?",
+                (scenario_id,),
+            )
+            self._conn.commit()
+
+    def duplicate_scenario(self, scenario_id: int) -> int | None:
+        original = self.get_scenario(scenario_id)
+        if original is None:
+            return None
+        taken = {item.scenario.name for item in self.list_scenarios()}
+        name = f"{original.scenario.name} (copy)"
+        suffix = 2
+        while name in taken:
+            name = f"{original.scenario.name} (copy {suffix})"
+            suffix += 1
+        return self.save_scenario(replace(original.scenario, name=name))
+
+    # --- scenario runs --------------------------------------------------
+
+    def add_scenario_run(self, scenario_id: int | None, result: ScenarioResult) -> int:
+        payload = json.dumps(_trim_run(result).to_dict())
+        with self._lock:
+            cursor = self._conn.execute(
+                "INSERT INTO scenario_runs (scenario_id, name, engine, environment, passed,"
+                " passed_count, failed_count, skipped_count, elapsed_ms, result_json,"
+                " created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    scenario_id,
+                    result.name,
+                    result.engine,
+                    result.environment,
+                    int(result.passed),
+                    result.count("passed"),
+                    result.count("failed"),
+                    result.count("skipped"),
+                    result.elapsed_ms,
+                    payload,
+                    _now(),
+                ),
+            )
+            run_id = int(cursor.lastrowid)
+            self._conn.execute(
+                "DELETE FROM scenario_runs WHERE id NOT IN"
+                " (SELECT id FROM scenario_runs ORDER BY id DESC LIMIT ?)",
+                (SCENARIO_RUN_LIMIT,),
+            )
+            self._conn.commit()
+            return run_id
+
+    def list_scenario_runs(self, limit: int = 20) -> list[ScenarioRun]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM scenario_runs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [_row_to_run(row) for row in rows]
+
+    def get_scenario_run(self, run_id: int) -> ScenarioRun | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM scenario_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        return _row_to_run(row) if row else None
+
+    def clear_scenario_runs(self) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM scenario_runs")
+            self._conn.commit()
+
     # --- history --------------------------------------------------------
 
     def add_history(self, request: Request, response: Response) -> int:
@@ -330,6 +492,41 @@ class Store:
         with self._lock:
             self._conn.execute("DELETE FROM history")
             self._conn.commit()
+
+
+def _trim_run(result: ScenarioResult) -> ScenarioResult:
+    """Cap the stored body of every step without touching the caller's copy."""
+    steps = []
+    for step in result.steps:
+        if step.response is not None and len(step.response.body) > RUN_BODY_LIMIT:
+            step = replace(
+                step,
+                response=replace(
+                    step.response,
+                    body=step.response.body[:RUN_BODY_LIMIT],
+                    body_truncated=True,
+                ),
+            )
+        steps.append(step)
+    return replace(result, steps=steps)
+
+
+def _row_to_scenario(row: sqlite3.Row) -> SavedScenario:
+    return SavedScenario(
+        id=row["id"],
+        scenario=Scenario.from_dict(json.loads(row["scenario_json"])),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_run(row: sqlite3.Row) -> ScenarioRun:
+    return ScenarioRun(
+        id=row["id"],
+        scenario_id=row["scenario_id"],
+        result=ScenarioResult.from_dict(json.loads(row["result_json"])),
+        created_at=row["created_at"],
+    )
 
 
 def _dump_vars(variables: list[KeyValue]) -> str:

@@ -1,3 +1,4 @@
+{% from "fragments/_macros.html" import body_pre %}
 {% set notes = notes if notes is defined else [] %}
 {% for note in notes %}
 <p class="warnings">{{ note }}</p>
@@ -25,8 +26,7 @@
   <button type="button" data-tab="resp-headers">Headers ({{ response.headers | length }})</button>
 </nav>
 
-<div data-panel="pretty" class="panel"><pre>{% for line in pretty %}{% if line.clipped %}<span class="clip" data-label="show all {{ "{:,}".format(line.length) }} chars"><span class="clip-short">{{ line.short }}</span><span class="clip-full" hidden>{{ line.text }}</span> <button type="button" class="clip-toggle">show all {{ "{:,}".format(line.length) }} chars</button></span>{% else %}{{ line.text }}{% endif %}
-{% endfor %}</pre></div>
+<div data-panel="pretty" class="panel">{{ body_pre(pretty) }}</div>
 <div data-panel="raw" class="panel" hidden><pre>{{ response.body }}</pre></div>
 <div data-panel="resp-headers" class="panel" hidden>
   <table class="headers">

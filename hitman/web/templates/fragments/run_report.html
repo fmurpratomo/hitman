@@ -1,0 +1,67 @@
+{% from "fragments/_macros.html" import body_pre %}
+{% set notes = notes if notes is defined else [] %}
+{% for note in notes %}
+<p class="warnings">{{ note }}</p>
+{% endfor %}
+
+<div class="status-line">
+  <span class="badge {{ 's2' if result.passed else 'err' }}">{{ 'PASSED' if result.passed else 'FAILED' }}</span>
+  <span class="name">{{ result.name }}</span>
+  <span class="ms">{{ result.count('passed') }} passed &middot;
+    {{ result.count('failed') }} failed &middot;
+    {{ result.count('skipped') }} skipped</span>
+  <span class="ms">{{ result.elapsed_ms | round | int }}ms</span>
+  <span class="engine">via {{ result.engine }}</span>
+  {% if result.environment %}<span class="muted">env {{ result.environment }}</span>{% endif %}
+</div>
+
+<ol class="run-steps">
+  {% for step in result.steps %}
+  <li class="run-step {{ step.outcome }}">
+    <div class="run-head">
+      <span class="badge {{ {'passed': 's2', 'failed': 'err'}.get(step.outcome, '') }}">{{ step.outcome }}</span>
+      <span class="name">{{ step.name }}</span>
+      {% if step.request %}
+      <span class="verb">{{ step.request.method }}</span>
+      <span class="url">{{ step.request.full_url() }}</span>
+      {% endif %}
+      {% if step.response and step.response.status %}
+      <span class="badge s{{ step.response.status // 100 }}">{{ step.response.status }}</span>
+      <span class="ms">{{ step.response.elapsed_ms | round | int }}ms</span>
+      {% endif %}
+    </div>
+
+    {% if step.error %}<p class="run-error">{{ step.error }}</p>{% endif %}
+    {% for note in step.notes %}<p class="warnings">{{ note }}</p>{% endfor %}
+
+    {% if step.checks %}
+    <ul class="checks">
+      {% for check in step.checks %}
+      <li class="{{ 'ok' if check.passed else 'bad' }}">
+        <span class="tick">{% if check.passed %}&#10003;{% else %}&#10007;{% endif %}</span>
+        <span class="label">{{ check.label }}</span>
+        <span class="muted">&rarr; {{ check.detail }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if step.captured %}
+    <p class="captured">
+      {% for name, value in step.captured %}
+      <code>{{ "{{" ~ name ~ "}}" }}</code> = {{ value | truncate(120, True) }}{% if not loop.last %} &middot; {% endif %}
+      {% endfor %}
+    </p>
+    {% endif %}
+
+    {% if step.response and step.response.body %}
+    <details class="run-body">
+      <summary>Response body <span class="muted">{{ step.response.size_bytes }} B</span></summary>
+      {{ body_pre(pretty_lines(step.response.body)) }}
+    </details>
+    {% endif %}
+  </li>
+  {% else %}
+  <li class="empty">This scenario has no steps yet.</li>
+  {% endfor %}
+</ol>

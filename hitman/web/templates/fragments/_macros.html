@@ -23,3 +23,102 @@
   </template>
 </div>
 {% endmacro %}
+
+{# The pretty-printed body, with a per-line show/hide toggle for lines too
+   long to display. Both halves are escaped by Jinja and only visibility is
+   flipped in JS — no markup is ever built around a response body. #}
+{% macro body_pre(lines) %}<pre>{% for line in lines %}{% if line.clipped %}<span class="clip" data-label="show all {{ "{:,}".format(line.length) }} chars"><span class="clip-short">{{ line.short }}</span><span class="clip-full" hidden>{{ line.text }}</span> <button type="button" class="clip-toggle">show all {{ "{:,}".format(line.length) }} chars</button></span>{% else %}{{ line.text }}{% endif %}
+{% endfor %}</pre>{% endmacro %}
+
+{# --- scenario editor -------------------------------------------------- #}
+{#
+   Every row below carries the uid of the step that owns it, because a form
+   submits flat arrays and cannot otherwise express a step containing a list.
+   These macros must be imported `with context`: they read saved_groups,
+   assertion_kinds, assertion_ops and capture_sources from the render context.
+#}
+
+{% macro assert_row(uid, item) %}
+<div class="row">
+  <input type="hidden" name="assert_step" value="{{ uid }}">
+  <input type="hidden" name="assert_enabled" value="{{ '1' if item.enabled else '0' }}">
+  <input type="checkbox" class="toggle" {% if item.enabled %}checked{% endif %} aria-label="Check enabled">
+  <select name="assert_kind" aria-label="What to check">
+    {% for kind in assertion_kinds %}
+    <option value="{{ kind }}" {% if item.kind == kind %}selected{% endif %}>{{ kind }}</option>
+    {% endfor %}
+  </select>
+  <input type="text" name="assert_target" value="{{ item.target }}"
+         placeholder="path / header" aria-label="Path or header name">
+  <select name="assert_op" aria-label="Comparison">
+    {% for op in assertion_ops %}
+    <option value="{{ op }}" {% if item.op == op %}selected{% endif %}>{{ op.replace('_', ' ') }}</option>
+    {% endfor %}
+  </select>
+  <input type="text" name="assert_value" value="{{ item.value }}"
+         placeholder="expected" aria-label="Expected value">
+  <button type="button" class="remove" aria-label="Remove check">&times;</button>
+</div>
+{% endmacro %}
+
+{% macro capture_row(uid, item) %}
+<div class="row">
+  <input type="hidden" name="capture_step" value="{{ uid }}">
+  <input type="hidden" name="capture_enabled" value="{{ '1' if item.enabled else '0' }}">
+  <input type="checkbox" class="toggle" {% if item.enabled %}checked{% endif %} aria-label="Capture enabled">
+  <input type="text" name="capture_name" value="{{ item.name }}"
+         placeholder="variable" aria-label="Variable name">
+  <select name="capture_source" aria-label="Where from">
+    {% for source in capture_sources %}
+    <option value="{{ source }}" {% if item.source == source %}selected{% endif %}>{{ source }}</option>
+    {% endfor %}
+  </select>
+  <input type="text" name="capture_path" value="{{ item.path }}"
+         placeholder="path / header" aria-label="Path or header name">
+  <button type="button" class="remove" aria-label="Remove capture">&times;</button>
+</div>
+{% endmacro %}
+
+{% macro step_block(step, uid) %}
+<div class="step" data-step-uid="{{ uid }}">
+  <div class="step-head">
+    <input type="hidden" name="step_uid" value="{{ uid }}">
+    <input type="hidden" name="step_enabled" value="{{ '1' if step.enabled else '0' }}">
+    <input type="checkbox" class="toggle" {% if step.enabled %}checked{% endif %} aria-label="Step enabled">
+    <select name="step_request_id" aria-label="Saved request">
+      <option value="">— pick a saved request —</option>
+      {% for folder, items in saved_groups %}
+        {% if folder %}<optgroup label="{{ folder }}">{% endif %}
+        {% for item in items %}
+        <option value="{{ item.id }}" {% if step.request_id == item.id %}selected{% endif %}>{{ item.request.method }} · {{ item.name }}</option>
+        {% endfor %}
+        {% if folder %}</optgroup>{% endif %}
+      {% endfor %}
+    </select>
+    <input type="text" name="step_name" value="{{ step.name }}"
+           placeholder="Step name (optional)" autocomplete="off">
+    <button type="button" class="icon step-up" title="Move up" aria-label="Move step up">&#8593;</button>
+    <button type="button" class="icon step-down" title="Move down" aria-label="Move step down">&#8595;</button>
+    <button type="button" class="icon delete step-remove" title="Remove step" aria-label="Remove step">&times;</button>
+  </div>
+
+  <div class="kv checks">
+    <div class="rows">
+      {% for item in step.assertions %}{{ assert_row(uid, item) }}{% endfor %}
+    </div>
+    <button type="button" class="add-row">+ check</button>
+    <template class="row-template">{{ assert_row(uid, blank_assertion) }}</template>
+  </div>
+
+  <details class="captures-box" {% if step.captures %}open{% endif %}>
+    <summary>Capture into variables <span class="muted">{{ step.captures | length or '' }}</span></summary>
+    <div class="kv captures">
+      <div class="rows">
+        {% for item in step.captures %}{{ capture_row(uid, item) }}{% endfor %}
+      </div>
+      <button type="button" class="add-row">+ capture</button>
+      <template class="row-template">{{ capture_row(uid, blank_capture) }}</template>
+    </div>
+  </details>
+</div>
+{% endmacro %}

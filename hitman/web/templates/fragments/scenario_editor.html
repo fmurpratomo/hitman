@@ -1,0 +1,53 @@
+{% from "fragments/_macros.html" import step_block with context %}
+{% set current = current if current is defined else None %}
+
+<form id="scenario-form">
+  {% if current %}<input type="hidden" name="scenario_id" value="{{ current.id }}">{% endif %}
+  <div class="urlbar">
+    <input type="text" name="scenario_name" value="{{ scenario.name }}"
+           placeholder="Scenario name, e.g. Checkout happy path" autocomplete="off">
+    <select name="on_failure" aria-label="When a step fails">
+      <option value="stop" {% if scenario.on_failure == 'stop' %}selected{% endif %}>Stop on first failure</option>
+      <option value="continue" {% if scenario.on_failure == 'continue' %}selected{% endif %}>Run every step</option>
+    </select>
+    <button type="button" class="primary" data-action="post" data-url="/scenarios/run"
+            data-form="#scenario-form" data-vals='{"engine": "httpx"}'
+            data-target="#response">Run</button>
+    <button type="button" data-action="post" data-url="/scenarios/run"
+            data-form="#scenario-form" data-vals='{"engine": "curl"}' data-target="#response"
+            {% if not curl_available %}disabled title="The curl binary was not found on this system"{% endif %}>
+      Run with curl
+    </button>
+  </div>
+
+  <input type="text" name="scenario_description" value="{{ scenario.description }}"
+         class="wide" placeholder="What this scenario proves (optional)" autocomplete="off">
+
+  <p class="muted small">
+    Steps run top to bottom against the active environment. A capture binds a
+    value out of one response to <code>{{ '{{name}}' }}</code>, and every later
+    step can use it — that is how a login step hands a token to the next one.
+  </p>
+
+  <div id="steps" class="steps">
+    {% for step in scenario.steps %}{{ step_block(step, "s" ~ loop.index0) }}{% endfor %}
+  </div>
+  {% if not scenario.steps %}
+  <p class="empty" id="steps-empty">No steps yet. Add one and pick a saved request.</p>
+  {% endif %}
+  <button type="button" id="add-step">+ Add step</button>
+</form>
+
+<div class="save-row">
+  {% if current %}
+  <button type="button" class="primary" data-action="put" data-url="/scenarios/{{ current.id }}"
+          data-form="#scenario-form" data-target="#builder">Update</button>
+  {% endif %}
+  <button type="button" data-action="post" data-url="/scenarios"
+          data-form="#scenario-form" data-target="#builder">Save as new</button>
+  <button type="button" data-action="get" data-url="/requests/new"
+          data-target="#builder">Back to the request builder</button>
+</div>
+
+{# Cloned by app.js for a new step; __UID__ is replaced with a fresh uid. #}
+<template id="step-template">{{ step_block(blank_step, "__UID__") }}</template>

@@ -155,6 +155,30 @@ document.addEventListener('click', (event) => {
     return;
   }
 
+  if (target.id === 'add-step') {
+    addStep();
+    return;
+  }
+
+  if (target.classList.contains('step-remove')) {
+    target.closest('.step').remove();
+    return;
+  }
+
+  // Moving a step is a DOM move: the server reads step order from the order
+  // the rows arrive in, so nothing has to be renumbered.
+  if (target.classList.contains('step-up')) {
+    const step = target.closest('.step');
+    if (step.previousElementSibling) step.parentElement.insertBefore(step, step.previousElementSibling);
+    return;
+  }
+
+  if (target.classList.contains('step-down')) {
+    const step = target.closest('.step');
+    if (step.nextElementSibling) step.parentElement.insertBefore(step.nextElementSibling, step);
+    return;
+  }
+
   if (target.classList.contains('add-row')) {
     const table = target.closest('.kv');
     table.querySelector('.rows').appendChild(
@@ -206,6 +230,24 @@ async function importCurl() {
   }
   swap(text, '#builder');
   document.getElementById('import-dialog').close();
+}
+
+// A new step is cloned from a server-rendered template whose every uid is the
+// placeholder __UID__ — including the ones inside its own nested row
+// templates, which is why the substitution is done on the HTML string rather
+// than on the cloned nodes.
+function addStep() {
+  const source = document.getElementById('step-template');
+  const holder = document.getElementById('steps');
+  if (!source || !holder) return;
+
+  const uid = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const scratch = document.createElement('div');
+  scratch.innerHTML = source.innerHTML.replace(/__UID__/g, uid);
+  while (scratch.firstElementChild) holder.appendChild(scratch.firstElementChild);
+
+  const empty = document.getElementById('steps-empty');
+  if (empty) empty.hidden = true;
 }
 
 let toastTimer;

@@ -48,6 +48,22 @@ tweak.
   the same fully-resolved request. Saved requests keep the template; history
   keeps the resolution.
 
+- Scenarios — `core/jsonpath.py`, `core/assertions.py` and `core/scenarios.py`,
+  plus the `scenarios` and `scenario_runs` tables. This is the two out-of-scope
+  items below, "response assertions" and "request chaining", shipped together,
+  because either one alone is close to useless: assertions with no chaining can
+  only test endpoints that need no setup, and chaining with no assertions
+  reports nothing.
+
+  A step names a *saved request* rather than embedding one, since requests are
+  already nameable, foldered and duplicable. The runner takes `lookup` and
+  `send` as arguments so `core` stays free of both the store and the web layer,
+  and threads one variable mapping through the steps — seeded from the active
+  environment, overlaid by each step's captures — which is why a captured value
+  and an environment variable are written the same way. Assertions are **data,
+  not a scripting language**: a stored test that can execute arbitrary
+  JavaScript is a different security model from the one in section 11.
+
 ### In scope (v1)
 
 - Request builder: method, URL, query parameters, headers, body.
@@ -507,3 +523,13 @@ design as built differs from the text above in these ways:
    `False`. Both `verify_tls` and `follow_redirects` now default to on and
    require an explicit `"0"` to disable — a dropped field must never weaken a
    request.
+
+4. **`ensure_scheme` broke saved requests templated on a variable.** `normalize`
+   runs on save, so `{{base_url}}/users` was stored as
+   `http://{{base_url}}/users` and resolved to
+   `http://http://localhost:3000/users`. It went unnoticed because `/send`
+   posts the form directly and never normalizes; scenarios run *saved*
+   requests, so every step hit it. A URL that starts with a placeholder is now
+   left alone — whether it needs a scheme is not knowable until the variable is
+   resolved, and the resolved URL passes through `ensure_scheme` again on its
+   way to the engine.
