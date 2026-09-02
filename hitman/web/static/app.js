@@ -81,6 +81,7 @@ async function fire(trigger) {
   }
 
   trigger.disabled = true;
+  const stopWaiting = showWaiting(trigger);
   try {
     const reply = await fetch(trigger.dataset.url, options);
     const text = await reply.text();
@@ -98,8 +99,39 @@ async function fire(trigger) {
   } catch (error) {
     toast('Request failed: ' + error.message);
   } finally {
+    stopWaiting();
     trigger.disabled = false;
   }
+}
+
+// A request in flight. `disabled` alone reads as "this button is broken", so
+// the trigger grows a spinner and the pane it is about to replace dims —
+// stale content must not be mistaken for the new response.
+//
+// Armed on a delay rather than immediately: this app's whole purpose is
+// calling localhost, where a reply often lands in under 20ms, and an
+// indicator that appears and vanishes in that time is a strobe rather than
+// information. It shows only if the request is still running when the timer
+// fires. Returns the function that clears it, so every exit path is covered
+// by one `finally`.
+const WAIT_DELAY_MS = 120;
+
+function showWaiting(trigger) {
+  const target = trigger.dataset.target
+    ? document.querySelector(trigger.dataset.target)
+    : null;
+
+  const timer = setTimeout(() => {
+    trigger.setAttribute('aria-busy', 'true');
+    // The class goes on the container, which survives the innerHTML swap.
+    if (target) target.classList.add('is-loading');
+  }, WAIT_DELAY_MS);
+
+  return () => {
+    clearTimeout(timer);
+    trigger.removeAttribute('aria-busy');
+    if (target) target.classList.remove('is-loading');
+  };
 }
 
 // Keep the hidden "_enabled" field in step with its checkbox. An unchecked

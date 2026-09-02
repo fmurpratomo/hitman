@@ -141,3 +141,21 @@ input.wide, button.wide { width: 100%; }
 .run-body { margin: 6px 0; }
 .run-body > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .run-body pre { max-height: 40vh; overflow: auto; }
+
+/* --- a request in flight --- */
+/* Beats button:disabled on specificity, so a waiting control stays legible
+   instead of fading out with the rest of the disabled ones. */
+button[aria-busy="true"] { opacity: 1; }
+button[aria-busy="true"]::after {
+  content: ""; display: inline-block; width: 11px; height: 11px;
+  margin-left: 7px; vertical-align: -1px; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent;
+  animation: spin .6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+/* The pane still holds the previous response until the new one lands. */
+.is-loading { opacity: .4; transition: opacity .1s ease-in; }
+@media (prefers-reduced-motion: reduce) {
+  button[aria-busy="true"]::after { animation: none; }
+  .is-loading { transition: none; }
+}

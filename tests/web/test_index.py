@@ -100,3 +100,23 @@ def test_static_assets_are_revalidated_not_heuristically_cached(client):
 
 def test_page_responses_are_not_given_that_header(client):
     assert client.get("/").headers.get("cache-control") != "no-cache"
+
+
+def test_the_in_flight_indicator_is_wired_up_at_both_ends():
+    """Regression guard for a bug no server-side test can see.
+
+    The waiting state is a name agreed between app.js, which sets it, and
+    app.css, which draws it. Rename one and the Send button silently goes back
+    to just greying out — the markup stays correct and only the rendering is
+    wrong, which is exactly the class of bug the stylesheet test in
+    test_bodyview.py exists for.
+    """
+    from pathlib import Path
+
+    script = Path("hitman/web/static/app.js").read_text()
+    css = Path("hitman/web/static/app.css").read_text()
+
+    assert "aria-busy" in script and 'button[aria-busy="true"]::after' in css
+    assert "'is-loading'" in script and ".is-loading" in css
+    # Shown on a delay, or a localhost reply makes it strobe.
+    assert "WAIT_DELAY_MS" in script
