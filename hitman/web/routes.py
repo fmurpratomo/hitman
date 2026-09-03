@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi import Request as HttpRequest
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import Response as BareResponse
 
 from hitman.core.assertions import KINDS, OPS, blank_assertion
 from hitman.core.curl_export import to_command
@@ -186,15 +187,50 @@ def load_request(request_id: int, http_request: HttpRequest):
     saved = http_request.app.state.store.get_request(request_id)
     if saved is None:
         raise HTTPException(status_code=404, detail="Saved request not found")
+    # editing, not request: loading gives back what you were doing.
     return render(
         http_request,
-        "fragments/builder.html",
+        "fragments/builder_with_sidebar.html",
+        {"req": saved.editing, "warnings": [], "current": saved},
+    )
+
+
+@router.put("/requests/{request_id}/draft", response_class=BareResponse)
+async def save_draft(request_id: int, http_request: HttpRequest):
+    """Autosave point. Called while you type, so it answers with nothing.
+
+    A draft is a convenience, never the record: a request that never arrives
+    costs the last few seconds of typing and must not interrupt anything, so
+    there is no fragment to swap and no error banner to render.
+    """
+    store = http_request.app.state.store
+    if store.get_request(request_id) is None:
+        raise HTTPException(status_code=404, detail="Saved request not found")
+    form = await http_request.form()
+    kept = store.save_draft(request_id, request_from_form(form))
+    # 204 with the answer in a header: the caller only needs to know whether
+    # the edit left anything unsaved, so it can show or hide the marker.
+    return BareResponse(status_code=204, headers={"X-Draft": "1" if kept else "0"})
+
+
+@router.post("/requests/{request_id}/rollback", response_class=HTMLResponse)
+def rollback_request(request_id: int, http_request: HttpRequest):
+    """Throw the draft away and put the checkpoint back in the builder."""
+    store = http_request.app.state.store
+    if store.get_request(request_id) is None:
+        raise HTTPException(status_code=404, detail="Saved request not found")
+    store.clear_draft(request_id)
+    saved = store.get_request(request_id)
+    return render(
+        http_request,
+        "fragments/builder_with_sidebar.html",
         {"req": saved.request, "warnings": [], "current": saved},
     )
 
 
 @router.put("/requests/{request_id}", response_class=HTMLResponse)
 async def update_request(request_id: int, http_request: HttpRequest):
+    """Move the checkpoint to what is on screen. This is the deliberate save."""
     store = http_request.app.state.store
     if store.get_request(request_id) is None:
         raise HTTPException(status_code=404, detail="Saved request not found")
@@ -203,7 +239,13 @@ async def update_request(request_id: int, http_request: HttpRequest):
     name = str(form.get("save_name") or "").strip() or outgoing.url or "Untitled"
     folder = str(form.get("save_folder") or "")
     store.update_request(request_id, name, outgoing, folder)
-    return render(http_request, "fragments/sidebar.html", {"req": outgoing})
+    # The builder comes back too, so the unsaved marker clears itself.
+    saved = store.get_request(request_id)
+    return render(
+        http_request,
+        "fragments/builder_with_sidebar.html",
+        {"req": saved.request, "warnings": [], "current": saved},
+    )
 
 
 @router.post("/requests/{request_id}/duplicate", response_class=HTMLResponse)

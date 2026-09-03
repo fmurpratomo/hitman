@@ -391,3 +391,20 @@ def test_runs_can_be_cleared(client, app, fixture_server):
     client.post("/scenarios/run", data=scenario_form(step_request_id=[str(request_id)]))
     client.delete("/scenarios/runs")
     assert app.state.store.list_scenario_runs() == []
+
+
+def test_a_scenario_runs_the_checkpoint_not_your_unsaved_edits(client, app, fixture_server):
+    """A test suite has to run the committed request, or it tests your scratchpad.
+
+    Steps name saved requests, and a saved request has two states while you are
+    editing it. The scenario takes the checkpoint, so a run means the same thing
+    whether or not a builder happens to be open on one of its steps.
+    """
+    request_id = app.state.store.save_request("JSON", Request(url=f"{fixture_server}/json"))
+    app.state.store.save_draft(request_id, Request(url=f"{fixture_server}/status/500"))
+
+    client.post("/scenarios/run", data=scenario_form(step_request_id=[str(request_id)]))
+    step = app.state.store.list_scenario_runs()[0].result.steps[0]
+    assert step.request.url == f"{fixture_server}/json"
+    assert step.outcome == "passed"
+

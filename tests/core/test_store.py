@@ -299,3 +299,103 @@ def test_a_database_without_the_folder_column_is_migrated(tmp_path):
         assert item.request.url == "http://x.test/"
     finally:
         store.close()
+
+
+# --- drafts and the checkpoint -----------------------------------------
+
+
+def test_a_new_saved_request_has_nothing_unsaved(store):
+    saved = store.get_request(store.save_request("R", make_request()))
+    assert saved.dirty is False
+    assert saved.draft is None
+    assert saved.editing == saved.request
+
+
+def test_a_draft_is_what_you_get_back_while_the_checkpoint_stays_put(store):
+    saved_id = store.save_request("R", make_request("http://x.test/a"))
+    store.save_draft(saved_id, make_request("http://x.test/b"))
+    saved = store.get_request(saved_id)
+    assert saved.dirty is True
+    assert saved.editing.url == "http://x.test/b"
+    assert saved.request.url == "http://x.test/a"
+
+
+def test_a_draft_is_stored_verbatim_rather_than_normalized(store):
+    """A disabled row is dropped from the checkpoint but is live editing state.
+
+    normalize() exists to make two semantically identical requests compare
+    equal, which means throwing away everything that does not get sent. Run it
+    over a draft and toggling a header off deletes the row.
+    """
+    saved_id = store.save_request("R", make_request())
+    draft = Request(
+        url="http://x.test/a?page=2",
+        headers=[KeyValue("X-Debug", "1", enabled=False)],
+    )
+    store.save_draft(saved_id, draft)
+    assert store.get_request(saved_id).draft == draft
+
+
+def test_a_draft_identical_to_the_checkpoint_is_not_kept(store):
+    """Typing a character and deleting it must not leave the request dirty."""
+    request = make_request()
+    saved_id = store.save_request("R", request)
+    stored = store.get_request(saved_id).request
+    assert store.save_draft(saved_id, stored) is False
+    assert store.get_request(saved_id).dirty is False
+
+
+def test_a_draft_differing_only_by_a_disabled_row_is_kept(store):
+    """The checkpoint cannot express it, so it counts as unsaved work."""
+    saved_id = store.save_request("R", make_request())
+    stored = store.get_request(saved_id).request
+    stored.headers.append(KeyValue("X-Debug", "1", enabled=False))
+    assert store.save_draft(saved_id, stored) is True
+
+
+def test_updating_moves_the_checkpoint_and_drops_the_draft(store):
+    saved_id = store.save_request("R", make_request("http://x.test/a"))
+    store.save_draft(saved_id, make_request("http://x.test/b"))
+    store.update_request(saved_id, "R", make_request("http://x.test/b"))
+    saved = store.get_request(saved_id)
+    assert saved.dirty is False
+    assert saved.request.url == "http://x.test/b"
+
+
+def test_rolling_back_leaves_the_checkpoint_as_the_only_state(store):
+    saved_id = store.save_request("R", make_request("http://x.test/a"))
+    store.save_draft(saved_id, make_request("http://x.test/b"))
+    store.clear_draft(saved_id)
+    saved = store.get_request(saved_id)
+    assert saved.dirty is False
+    assert saved.editing.url == "http://x.test/a"
+
+
+def test_drafting_an_unknown_request_keeps_nothing(store):
+    assert store.save_draft(9999, make_request()) is False
+
+
+def test_drafts_are_per_request_and_do_not_leak(store):
+    first = store.save_request("First", make_request("http://x.test/1"))
+    second = store.save_request("Second", make_request("http://x.test/2"))
+    store.save_draft(first, make_request("http://x.test/1-edited"))
+    assert store.get_request(second).dirty is False
+    assert store.get_request(first).editing.url == "http://x.test/1-edited"
+
+
+def test_duplicate_copies_the_checkpoint_not_the_draft(store):
+    """A copy starts clean: a draft belongs to the request you are editing."""
+    saved_id = store.save_request("R", make_request("http://x.test/a"))
+    store.save_draft(saved_id, make_request("http://x.test/b"))
+    copy_id = store.duplicate_request(saved_id)
+    copy = store.get_request(copy_id)
+    assert copy.request.url == "http://x.test/a"
+    assert copy.dirty is False
+
+
+def test_deleting_a_request_takes_its_draft_with_it(store):
+    saved_id = store.save_request("R", make_request())
+    store.save_draft(saved_id, make_request("http://x.test/b"))
+    store.delete_request(saved_id)
+    assert store.get_request(saved_id) is None
+

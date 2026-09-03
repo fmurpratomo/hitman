@@ -63,6 +63,11 @@ function swap(html, targetSelector) {
 async function fire(trigger) {
   if (trigger.dataset.confirm && !window.confirm(trigger.dataset.confirm)) return;
 
+  // Any action can be the one that navigates away, and the debounce timer may
+  // still be holding the last few keystrokes. Settle the draft before the DOM
+  // is swapped out from under the form it would have been read from.
+  await flushDraft();
+
   const method = (trigger.dataset.action || 'get').toUpperCase();
   const options = { method };
 
@@ -146,11 +151,14 @@ document.addEventListener('change', (event) => {
     fire(box);
     return;
   }
+  scheduleDraft(box);
   if (box.id === 'body-type') {
     document.getElementById('body-text').hidden = box.value === 'none' || box.value === 'form';
     document.getElementById('body-form').hidden = box.value !== 'form';
   }
 });
+
+document.addEventListener('input', (event) => scheduleDraft(event.target));
 
 document.addEventListener('click', (event) => {
   const target = event.target;
@@ -220,7 +228,10 @@ document.addEventListener('click', (event) => {
   }
 
   if (target.classList.contains('remove') && target.closest('.row')) {
+    // Read the owning form before the row leaves the document.
+    const form = target.closest('form');
     target.closest('.row').remove();
+    scheduleDraft(form);
     return;
   }
 
@@ -280,6 +291,52 @@ function addStep() {
 
   const empty = document.getElementById('steps-empty');
   if (empty) empty.hidden = true;
+}
+
+// Editing a saved request is kept without being committed, so switching to
+// another endpoint to check something is not the same as throwing your work
+// away. The checkpoint only moves when you press Update; this is the other
+// half, and it must never get in the way of either.
+//
+// Debounced rather than sent per keystroke, and flushed by fire() before any
+// action that could replace the form.
+const DRAFT_DELAY_MS = 600;
+
+let draftTimer = null;
+let draftForm = null;
+
+function scheduleDraft(origin) {
+  // data-request-id is only on a builder holding a saved request. A brand new
+  // request has nothing to be a draft of.
+  const form = origin && origin.closest && origin.closest('form[data-request-id]');
+  if (!form) return;
+  draftForm = form;
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(flushDraft, DRAFT_DELAY_MS);
+}
+
+async function flushDraft() {
+  if (!draftTimer) return;
+  clearTimeout(draftTimer);
+  draftTimer = null;
+
+  const form = draftForm;
+  draftForm = null;
+  if (!form || !form.isConnected) return;
+
+  try {
+    const reply = await fetch(`/requests/${form.dataset.requestId}/draft`, {
+      method: 'PUT',
+      body: new FormData(form),
+    });
+    // Revealed here rather than by a swap: re-rendering the builder mid-edit
+    // would move the caret out from under whoever is typing.
+    const marker = document.getElementById('draft-state');
+    if (marker && reply.ok) marker.hidden = reply.headers.get('X-Draft') !== '1';
+  } catch (error) {
+    // A lost draft costs a few seconds of typing. Interrupting the person
+    // editing costs more, so this stays silent.
+  }
 }
 
 let toastTimer;

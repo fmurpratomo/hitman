@@ -5,7 +5,7 @@
   {% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}
 </ul>
 {% endif %}
-<form id="request-form">
+<form id="request-form"{% if current %} data-request-id="{{ current.id }}"{% endif %}>
   <div class="urlbar">
     <select name="method" aria-label="HTTP method">
       {% for verb in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] %}
@@ -65,6 +65,20 @@
     </label>
   </div>
 
+  {% if current %}
+  {# Rendered whether or not there is unsaved work: app.js reveals it the
+     moment an autosave reports the first change, without a round trip. #}
+  <p class="draft-state" id="draft-state" {% if not current.dirty %}hidden{% endif %}>
+    <span class="dot">&bull;</span>
+    Unsaved changes, kept as you type. <b>Update</b> moves the checkpoint here.
+    <button type="button" data-action="post"
+            data-url="/requests/{{ current.id }}/rollback" data-target="#builder"
+            data-confirm="Discard everything changed since the last update?">
+      Roll back to checkpoint
+    </button>
+  </p>
+  {% endif %}
+
   <div class="save-row">
     <input type="text" id="save-name" name="save_name" placeholder="Name this request"
            value="{{ current.name if current else '' }}" autocomplete="off">
@@ -76,7 +90,7 @@
     </datalist>
     {% if current %}
     <button type="button" class="primary" data-action="put" data-url="/requests/{{ current.id }}"
-            data-form="#request-form" data-target="#sidebar">Update</button>
+            data-form="#request-form" data-target="#builder">Update</button>
     {% endif %}
     <button type="button" id="save-request" data-action="post" data-url="/requests"
             data-form="#request-form" data-target="#sidebar">Save as new</button>

@@ -1,4 +1,4 @@
-from hitman.core.models import Request, Response
+from hitman.core.models import KeyValue, Request, Response
 
 
 def make_saved(app, name="Get users"):
@@ -184,3 +184,127 @@ def test_the_folder_datalist_offers_existing_folders(client, app):
     assert '<datalist id="folder-list">' in page.text
     assert '<option value="Auth">' in page.text
     assert '<option value="Users">' in page.text
+
+
+# --- drafts and the checkpoint -----------------------------------------
+#
+# Two save methods. Editing a saved request keeps a draft automatically, so
+# switching to another endpoint is not the same as discarding your work.
+# Update is the deliberate one: it moves the checkpoint and clears the draft.
+# Rollback throws the draft away and puts the checkpoint back.
+
+
+def form_for(request, base_form):
+    """The payload the builder submits for an already-stored request."""
+    return {
+        **base_form,
+        "method": request.method,
+        "url": request.url,
+        "param_key": [kv.key for kv in request.params],
+        "param_value": [kv.value for kv in request.params],
+        "param_enabled": ["1"] * len(request.params),
+        "header_key": [kv.key for kv in request.headers],
+        "header_value": [kv.value for kv in request.headers],
+        "header_enabled": ["1"] * len(request.headers),
+        "body_type": request.body_type,
+        "body": request.body,
+        "timeout": str(request.timeout),
+    }
+
+
+def test_editing_a_saved_request_keeps_a_draft(client, app, base_form):
+    saved_id = make_saved(app)
+    reply = client.put(
+        f"/requests/{saved_id}/draft", data={**base_form, "url": "http://x.test/edited"}
+    )
+    assert reply.status_code == 204
+    assert reply.headers["X-Draft"] == "1"
+    saved = app.state.store.get_request(saved_id)
+    assert saved.dirty is True
+    assert saved.editing.url == "http://x.test/edited"
+
+
+def test_a_draft_survives_moving_to_another_request_and_back(client, app, base_form):
+    """The whole point: checking another endpoint must not cost you your edits."""
+    first = make_saved(app, "First")
+    second = make_saved(app, "Second")
+
+    client.put(f"/requests/{first}/draft", data={**base_form, "url": "http://x.test/wip"})
+    client.get(f"/requests/{second}")  # wander off
+    reply = client.get(f"/requests/{first}")  # and come back
+
+    assert 'value="http://x.test/wip"' in reply.text
+    assert "Roll back to checkpoint" in reply.text
+
+
+def test_loading_a_clean_request_hides_the_unsaved_marker(client, app):
+    reply = client.get(f"/requests/{make_saved(app)}")
+    assert 'id="draft-state"' in reply.text
+    assert "hidden" in reply.text.split('id="draft-state"')[1].split(">")[0]
+
+
+def test_the_sidebar_marks_which_requests_have_unsaved_work(client, app, base_form):
+    saved_id = make_saved(app, "Get users")
+    assert "Unsaved changes" not in client.get("/requests").text
+    client.put(f"/requests/{saved_id}/draft", data={**base_form, "url": "http://x.test/wip"})
+    assert "Unsaved changes" in client.get("/requests").text
+
+
+def test_resubmitting_an_unchanged_form_does_not_look_unsaved(client, app, base_form):
+    """Type a character, delete it again: nothing was actually changed."""
+    saved_id = app.state.store.save_request(
+        "Get users",
+        Request(
+            url="http://localhost:3000/users",
+            params=[KeyValue("page", "2")],
+            headers=[KeyValue("Accept", "application/json")],
+        ),
+    )
+    stored = app.state.store.get_request(saved_id).request
+    reply = client.put(f"/requests/{saved_id}/draft", data=form_for(stored, base_form))
+    assert reply.headers["X-Draft"] == "0"
+    assert app.state.store.get_request(saved_id).dirty is False
+
+
+def test_update_moves_the_checkpoint_and_clears_the_draft(client, app, base_form):
+    saved_id = make_saved(app)
+    client.put(f"/requests/{saved_id}/draft", data={**base_form, "url": "http://x.test/wip"})
+    reply = client.put(
+        f"/requests/{saved_id}",
+        data={**base_form, "url": "http://x.test/wip", "save_name": "Get users"},
+    )
+    saved = app.state.store.get_request(saved_id)
+    assert saved.request.url == "http://x.test/wip"
+    assert saved.dirty is False
+    # The builder comes back so the marker clears without a reload.
+    assert 'id="request-form"' in reply.text
+    assert 'data-oob="#sidebar"' in reply.text
+
+
+def test_rollback_restores_the_checkpoint(client, app, base_form):
+    saved_id = make_saved(app)
+    client.put(f"/requests/{saved_id}/draft", data={**base_form, "url": "http://x.test/wip"})
+    reply = client.post(f"/requests/{saved_id}/rollback")
+    assert reply.status_code == 200
+    assert 'value="http://localhost:3000/users"' in reply.text
+    assert "http://x.test/wip" not in reply.text
+    assert app.state.store.get_request(saved_id).dirty is False
+
+
+def test_rollback_on_a_clean_request_changes_nothing(client, app):
+    saved_id = make_saved(app)
+    assert client.post(f"/requests/{saved_id}/rollback").status_code == 200
+    assert app.state.store.get_request(saved_id).request.url == "http://localhost:3000/users"
+
+
+def test_draft_and_rollback_on_an_unknown_request_are_404s(client, base_form):
+    assert client.put("/requests/9999/draft", data=base_form).status_code == 404
+    assert client.post("/requests/9999/rollback").status_code == 404
+
+
+def test_a_brand_new_request_is_not_drafted(client):
+    """There is nothing for it to be a draft of until it has been saved once."""
+    reply = client.get("/requests/new")
+    assert "data-request-id" not in reply.text
+    assert 'id="draft-state"' not in reply.text
+

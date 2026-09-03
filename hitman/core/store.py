@@ -27,11 +27,15 @@ SCENARIO_RUN_LIMIT = 100
 RUN_BODY_LIMIT = 64 * 1024
 
 _SCHEMA = """
+-- request_json is the checkpoint: the state as of the last explicit update.
+-- draft_json is the working copy, written automatically while you edit, and
+-- NULL when there is nothing unsaved. Rolling back is deleting the draft.
 CREATE TABLE IF NOT EXISTS saved_requests (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   name         TEXT NOT NULL,
   folder       TEXT NOT NULL DEFAULT '',
   request_json TEXT NOT NULL,
+  draft_json   TEXT,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
 );
@@ -99,8 +103,24 @@ class SavedRequest:
     name: str
     folder: str
     request: Request
+    draft: Request | None
     created_at: str
     updated_at: str
+
+    @property
+    def dirty(self) -> bool:
+        """Whether there is work that the last update does not contain."""
+        return self.draft is not None
+
+    @property
+    def editing(self) -> Request:
+        """What the builder should show: the draft when there is one.
+
+        Loading a request has to give you back what you were doing, not what
+        you last committed — otherwise switching away to check another endpoint
+        is the same as discarding your edits, which is the whole problem.
+        """
+        return self.draft if self.draft is not None else self.request
 
 
 @dataclass
@@ -181,6 +201,9 @@ class Store:
             self._conn.execute(
                 "ALTER TABLE saved_requests ADD COLUMN folder TEXT NOT NULL DEFAULT ''"
             )
+        if "draft_json" not in columns:
+            # Nullable with no default: an existing request has no unsaved work.
+            self._conn.execute("ALTER TABLE saved_requests ADD COLUMN draft_json TEXT")
 
     def close(self) -> None:
         with self._lock:
@@ -203,10 +226,11 @@ class Store:
     def update_request(
         self, request_id: int, name: str, request: Request, folder: str = ""
     ) -> None:
+        """Move the checkpoint to this state. The draft is now moot, so it goes."""
         with self._lock:
             self._conn.execute(
                 "UPDATE saved_requests SET name = ?, folder = ?, request_json = ?,"
-                " updated_at = ? WHERE id = ?",
+                " draft_json = NULL, updated_at = ? WHERE id = ?",
                 (
                     name,
                     folder.strip(),
@@ -214,6 +238,43 @@ class Store:
                     _now(),
                     request_id,
                 ),
+            )
+            self._conn.commit()
+
+    def save_draft(self, request_id: int, request: Request) -> bool:
+        """Record unsaved work against a saved request. Returns whether it kept one.
+
+        Stored **verbatim**, unlike the checkpoint, which goes through
+        ``normalize``. Normalising a draft would drop the rows you had just
+        toggled off and fold a half-typed query string into the params table —
+        it would edit the very thing whose job is to come back exactly as you
+        left it.
+
+        A draft identical to the checkpoint is deleted rather than stored, so
+        typing a character and deleting it again does not leave the request
+        looking permanently unsaved. The test is exact equality: anything the
+        checkpoint cannot express — a disabled header, say — counts as unsaved,
+        because the safe direction to fail in is keeping work, not dropping it.
+        """
+        current = self.get_request(request_id)
+        if current is None:
+            return False
+        if request == current.request:
+            self.clear_draft(request_id)
+            return False
+        with self._lock:
+            self._conn.execute(
+                "UPDATE saved_requests SET draft_json = ? WHERE id = ?",
+                (json.dumps(request.to_dict()), request_id),
+            )
+            self._conn.commit()
+        return True
+
+    def clear_draft(self, request_id: int) -> None:
+        """Discard unsaved work, leaving the checkpoint as the only state."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE saved_requests SET draft_json = NULL WHERE id = ?", (request_id,)
             )
             self._conn.commit()
 
@@ -544,11 +605,13 @@ def _row_to_env(row: sqlite3.Row) -> Environment:
 
 
 def _row_to_saved(row: sqlite3.Row) -> SavedRequest:
+    draft = row["draft_json"]
     return SavedRequest(
         id=row["id"],
         name=row["name"],
         folder=row["folder"],
         request=Request.from_dict(json.loads(row["request_json"])),
+        draft=Request.from_dict(json.loads(draft)) if draft else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

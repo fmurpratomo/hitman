@@ -120,3 +120,26 @@ def test_the_in_flight_indicator_is_wired_up_at_both_ends():
     assert "'is-loading'" in script and ".is-loading" in css
     # Shown on a delay, or a localhost reply makes it strobe.
     assert "WAIT_DELAY_MS" in script
+
+
+def test_the_draft_autosave_is_wired_up_at_both_ends():
+    """Same class of bug as the indicator guard above: a silent front-end break.
+
+    The autosave is a contract between builder.html, which marks the form with
+    the id to save against, app.js, which reads it, and the route it calls. Any
+    one of the three renamed and edits stop being kept, with every server-side
+    test still green.
+    """
+    from pathlib import Path
+
+    script = Path("hitman/web/static/app.js").read_text()
+    builder = Path("hitman/web/templates/fragments/builder.html").read_text()
+
+    assert "data-request-id" in builder
+    assert "form[data-request-id]" in script
+    assert "/draft" in script and "draft-state" in script
+    # Debounced, not one request per keystroke.
+    assert "DRAFT_DELAY_MS" in script
+    # Settled before any action that could swap the form away.
+    assert "await flushDraft();" in script
+

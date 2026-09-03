@@ -28,8 +28,9 @@
 {% macro saved_row(item) %}
 <div class="entry-row">
   <button type="button" class="entry" data-action="get" data-url="/requests/{{ item.id }}" data-target="#builder">
-    <span class="verb">{{ item.request.method }}</span>
+    <span class="verb">{{ item.editing.method }}</span>
     <span class="name">{{ item.name }}</span>
+    {% if item.dirty %}<span class="dot" title="Unsaved changes">&bull;</span>{% endif %}
   </button>
   <button type="button" class="icon" data-action="post" data-url="/requests/{{ item.id }}/duplicate"
           data-target="#sidebar" title="Duplicate {{ item.name }}"

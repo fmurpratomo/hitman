@@ -159,3 +159,12 @@ button[aria-busy="true"]::after {
   button[aria-busy="true"]::after { animation: none; }
   .is-loading { transition: none; }
 }
+
+/* --- unsaved work on a saved request --- */
+.draft-state { display: flex; align-items: center; gap: 8px; margin: 10px 0 0;
+  color: var(--warn); font-size: 13px; }
+.draft-state .dot { color: var(--warn); }
+.draft-state b { color: var(--text); font-weight: 600; }
+.draft-state button { margin-left: auto; color: var(--warn); font-size: 13px;
+  padding: 4px 9px; }
+.entry .dot { color: var(--warn); flex: none; }

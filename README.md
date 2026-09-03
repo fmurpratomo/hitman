@@ -72,6 +72,36 @@ Loading a saved request fills the builder and offers **Update** (rename, move
 folder, or overwrite with the current request) alongside **Save as new**. The
 duplicate button copies a request into the same folder as `… (copy)`.
 
+### Drafts and the checkpoint
+
+A saved request has two states, so that editing one is never a commitment:
+
+- The **draft** is your working copy. It is written automatically as you type,
+  a moment after you stop, and it is what you get back when you load the
+  request. Switching to another endpoint to check something is therefore not
+  the same as throwing your edits away — every request keeps its own draft, and
+  the sidebar marks the ones holding unsaved work with a dot.
+- The **checkpoint** is the state as of the last time you pressed **Update**.
+  That is the deliberate save. There is exactly one, and moving it discards
+  the draft, which is now redundant.
+
+**Roll back to checkpoint** appears whenever a draft exists and does the
+obvious thing: throws it away and puts the last updated version back in the
+builder. Only that one checkpoint is kept, so it undoes your unsaved edits, not
+a previous Update.
+
+Two details that follow from this split:
+
+- A draft is stored **verbatim**, unlike the checkpoint, which is canonicalised
+  the way `Copy as curl` is. Canonicalising a draft would drop the rows you had
+  just toggled off and rewrite a half-typed query string — it would edit the
+  one thing whose job is to come back exactly as you left it. A draft that ends
+  up identical to the checkpoint is dropped instead of stored, so typing a
+  character and deleting it does not leave a request looking permanently
+  unsaved.
+- **Scenarios run the checkpoint**, never the draft, so a run means the same
+  thing whether or not you happen to have a builder open on one of its steps.
+
 ## Environments
 
 Variables are resolved just before the request is sent, so:
