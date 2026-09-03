@@ -308,3 +308,92 @@ def test_a_brand_new_request_is_not_drafted(client):
     assert "data-request-id" not in reply.text
     assert 'id="draft-state"' not in reply.text
 
+
+# --- history shows the saved name ---------------------------------------
+
+
+def test_sending_a_loaded_saved_request_names_it_in_the_history(client, app, base_form,
+                                                                fixture_server):
+    saved_id = app.state.store.save_request("Get users", Request(url=f"{fixture_server}/json"))
+    reply = client.post(
+        "/send",
+        data={**base_form, "url": f"{fixture_server}/json", "request_id": str(saved_id)},
+    )
+    assert app.state.store.list_history()[0].saved_request_id == saved_id
+    # The reply carries the refreshed sidebar, so the name is visible at once.
+    assert "Get users" in reply.text
+
+
+def test_an_ad_hoc_send_still_shows_its_url(client, app, base_form, fixture_server):
+    reply = client.post("/send", data={**base_form, "url": f"{fixture_server}/json"})
+    assert app.state.store.list_history()[0].saved_request_id is None
+    assert f"{fixture_server}/json" in reply.text
+
+
+def test_the_builder_carries_the_id_of_the_request_it_loaded(client, app):
+    saved_id = make_saved(app)
+    reply = client.get(f"/requests/{saved_id}")
+    assert f'name="request_id" value="{saved_id}"' in reply.text
+
+
+def test_a_new_builder_carries_no_id_to_attribute_a_send_to(client):
+    assert 'name="request_id"' not in client.get("/requests/new").text
+
+
+def test_a_garbage_request_id_is_ignored_rather_than_failing_the_send(client, app, base_form,
+                                                                     fixture_server):
+    reply = client.post(
+        "/send",
+        data={**base_form, "url": f"{fixture_server}/json", "request_id": "not-a-number"},
+    )
+    assert reply.status_code == 200
+    assert app.state.store.list_history()[0].saved_request_id is None
+
+
+def test_the_history_row_keeps_the_url_in_reach_when_it_shows_a_name(client, app,
+                                                                    fixture_server):
+    """Showing the name must not hide what was actually sent."""
+    saved_id = app.state.store.save_request("Get users", Request(url=f"{fixture_server}/json"))
+    app.state.store.add_history(
+        Request(url=f"{fixture_server}/json"), Response(engine="httpx", status=200), saved_id
+    )
+    sidebar = client.get("/history").text
+    assert "Get users" in sidebar
+    assert f'title="{fixture_server}/json"' in sidebar
+
+
+def test_replaying_from_history_does_not_bind_the_builder_to_the_saved_request(client, app,
+                                                                              fixture_server):
+    """History holds the resolved request; updating a template with it would be wrong.
+
+    The name is a label on the list, not a claim that the two are the same
+    thing, so replay stays an unbound builder offering only Save as new.
+    """
+    saved_id = app.state.store.save_request("Templated", Request(url="{{base_url}}/json"))
+    entry_id = app.state.store.add_history(
+        Request(url=f"{fixture_server}/json"), Response(engine="httpx", status=200), saved_id
+    )
+    reply = client.get(f"/history/{entry_id}")
+    assert 'name="request_id"' not in reply.text
+    assert "Roll back to checkpoint" not in reply.text
+
+
+def test_the_history_list_is_grouped_under_day_headings(client, app):
+    app.state.store.add_history(
+        Request(url="http://x.test/"), Response(engine="httpx", status=200)
+    )
+    sidebar = client.get("/history").text
+    assert "<summary>Today" in sidebar
+    assert "http://x.test/" in sidebar
+
+
+def test_an_empty_history_says_so_instead_of_showing_an_empty_day(client):
+    sidebar = client.get("/history").text
+    assert "Nothing sent yet." in sidebar
+    assert "<summary>Today" not in sidebar
+
+
+def test_a_send_lands_under_today(client, base_form, fixture_server):
+    reply = client.post("/send", data={**base_form, "url": f"{fixture_server}/json"})
+    assert "<summary>Today" in reply.text
+

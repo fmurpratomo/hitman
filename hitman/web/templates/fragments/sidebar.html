@@ -5,17 +5,24 @@
 </nav>
 
 <div data-panel="history" class="panel list">
-  {% for entry in history %}
-  <button type="button" class="entry" data-action="get" data-url="/history/{{ entry.id }}" data-target="#builder">
-    <span class="verb">{{ entry.request.method }}</span>
-    <span class="url">{{ entry.request.url }}</span>
-    {% if entry.response.error %}
-    <span class="badge err">ERR</span>
-    {% else %}
-    <span class="badge s{{ (entry.response.status or 0) // 100 }}">{{ entry.response.status }}</span>
-    <span class="ms">{{ entry.response.elapsed_ms | round | int }}ms</span>
-    {% endif %}
-  </button>
+  {% for label, entries in history_days %}
+  <details class="folder" open>
+    <summary>{{ label }} <span class="muted">{{ entries | length }}</span></summary>
+    {% for entry in entries %}
+    <button type="button" class="entry" data-action="get" data-url="/history/{{ entry.id }}" data-target="#builder">
+      <span class="verb">{{ entry.request.method }}</span>
+      {# The name when the send came from a saved request, else the URL. The URL
+         is always the tooltip, so what was actually sent is never hidden. #}
+      <span class="url" title="{{ entry.request.url }}">{{ entry.label }}</span>
+      {% if entry.response.error %}
+      <span class="badge err">ERR</span>
+      {% else %}
+      <span class="badge s{{ (entry.response.status or 0) // 100 }}">{{ entry.response.status }}</span>
+      <span class="ms">{{ entry.response.elapsed_ms | round | int }}ms</span>
+      {% endif %}
+    </button>
+    {% endfor %}
+  </details>
   {% else %}
   <p class="empty">Nothing sent yet.</p>
   {% endfor %}

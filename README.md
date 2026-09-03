@@ -45,7 +45,22 @@ different database file, and `--no-browser` to stay in the terminal.
   an editable request.
 - **Copy as curl** — the reverse, so you can paste into a terminal or a ticket.
 - **History and saved requests** — every send is recorded, including failures,
-  and can be replayed with one click.
+  and can be replayed with one click. History lists a send under the name of
+  the request you saved rather than its URL, with the URL still on the row as
+  a tooltip.
+
+  The list is grouped into collapsible days — **Today**, **Yesterday**, then
+  the date — using your machine's timezone, not the UTC the timestamps are
+  stored in, so a request sent at 02:00 is filed under the day you sent it.
+
+  A send made from a loaded saved request is linked to it, so the name follows
+  a rename. Anything else — typed by hand, imported from curl, replayed, or
+  sent before this existed — is matched on content instead, comparing the
+  *resolved* form so a saved `{{base_url}}/users` matches the
+  `http://localhost:3000/users` that actually went out. That makes the match
+  depend on the active environment: switch environments and an old entry goes
+  back to showing its URL, because under this environment it is no longer that
+  request.
 
 ## Security notes
 

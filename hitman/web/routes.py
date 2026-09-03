@@ -25,6 +25,7 @@ from hitman.core.scenarios import (
 )
 from hitman.core.variables import substitute
 from hitman.web.bodyview import pretty_lines
+from hitman.web.dates import group_by_day
 from hitman.web.forms import request_from_form, scenario_from_form
 
 log = logging.getLogger(__name__)
@@ -33,11 +34,13 @@ router = APIRouter()
 
 def render(http_request: HttpRequest, template: str, context: dict) -> HTMLResponse:
     store = http_request.app.state.store
+    history = store.list_history(50)
     full = {
         "curl_available": http_request.app.state.curl_available,
         "saved_groups": store.grouped_requests(),
         "folders": store.list_folders(),
-        "history": store.list_history(50),
+        "history": history,
+        "history_days": group_by_day(history),
         "environments": store.list_environments(),
         "active_env": store.active_environment(),
         "scenario_groups": store.grouped_scenarios(),
@@ -119,8 +122,12 @@ async def send(http_request: HttpRequest):
         # engine.send blocks on the network; keep the event loop free.
         response = await run_in_threadpool(engine.send, resolved)
         try:
-            # History records what actually went out, placeholders resolved.
-            store.add_history(resolved, response)
+            # History records what actually went out, placeholders resolved,
+            # plus which saved request it came from so the list can name it.
+            raw_id = str(form.get("request_id") or "").strip()
+            store.add_history(
+                resolved, response, int(raw_id) if raw_id.isdigit() else None
+            )
         except Exception as exc:  # noqa: BLE001 - history is strictly secondary
             # The request already went out and came back. Losing the history
             # row must not cost the user the response they were waiting for,

@@ -399,3 +399,167 @@ def test_deleting_a_request_takes_its_draft_with_it(store):
     store.delete_request(saved_id)
     assert store.get_request(saved_id) is None
 
+
+# --- naming a history entry ---------------------------------------------
+#
+# History stores the request as it was actually sent, variables resolved, while
+# a saved request keeps the template. The two can never be matched by content,
+# so the link is recorded at send time and the name read back through a join.
+
+
+def test_a_send_records_which_saved_request_it_came_from(store):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(), saved_id)
+    entry = store.list_history()[0]
+    assert entry.saved_request_id == saved_id
+    assert entry.saved_name == "Get profile"
+    assert entry.label == "Get profile"
+
+
+def test_an_ad_hoc_send_falls_back_to_the_url(store):
+    store.add_history(Request(url="http://x.test/scratch"), make_response())
+    entry = store.list_history()[0]
+    assert entry.saved_request_id is None
+    assert entry.label == "http://x.test/scratch"
+
+
+def test_the_name_follows_a_rename(store):
+    """The name is joined, not copied, so the list never shows a stale one."""
+    saved_id = store.save_request("Old name", make_request())
+    store.add_history(make_request(), make_response(), saved_id)
+    store.update_request(saved_id, "New name", make_request())
+    assert store.list_history()[0].label == "New name"
+
+
+def test_deleting_the_saved_request_leaves_the_history_entry_intact(store):
+    """History is a record of what happened; deleting a request cannot unsend it."""
+    saved_id = store.save_request("Get profile", make_request("http://x.test/me"))
+    store.add_history(make_request("http://x.test/me"), make_response(), saved_id)
+    store.delete_request(saved_id)
+    entry = store.list_history()[0]
+    assert entry.saved_name is None
+    assert entry.label == "http://x.test/me"
+
+
+def test_a_single_entry_reads_back_with_its_name_too(store):
+    saved_id = store.save_request("Get profile", make_request())
+    entry_id = store.add_history(make_request(), make_response(), saved_id)
+    assert store.get_history(entry_id).label == "Get profile"
+
+
+def test_a_database_without_the_history_link_column_is_migrated(tmp_path):
+    """Sends recorded before this existed must survive, unnamed."""
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(
+        """
+        CREATE TABLE history (
+          id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+          request_json          TEXT NOT NULL,
+          engine                TEXT NOT NULL,
+          status                INTEGER,
+          reason                TEXT,
+          elapsed_ms            REAL,
+          size_bytes            INTEGER,
+          content_type          TEXT,
+          error                 TEXT,
+          curl_exit_code        INTEGER,
+          body_truncated        INTEGER NOT NULL DEFAULT 0,
+          response_headers_json TEXT,
+          response_body         TEXT,
+          created_at            TEXT NOT NULL
+        );
+        """
+    )
+    old.execute(
+        "INSERT INTO history (request_json, engine, status, created_at)"
+        " VALUES ('{\"url\": \"http://x.test/\"}', 'httpx', 200, 'then')"
+    )
+    old.commit()
+    old.close()
+
+    store = Store(path)
+    try:
+        entry = store.list_history()[0]
+        assert entry.saved_request_id is None
+        assert entry.label == "http://x.test/"
+    finally:
+        store.close()
+
+
+# --- naming an entry that carries no link -------------------------------
+#
+# The link is only recorded for sends made from a loaded saved request. A send
+# typed by hand, imported from curl, replayed, or made before the link existed
+# is still, in substance, a request you have saved — and that is the question
+# the history list answers.
+
+
+def test_an_unlinked_send_is_named_by_matching_a_saved_request(store):
+    store.save_request("Get profile", make_request("http://x.test/me"))
+    store.add_history(make_request("http://x.test/me"), make_response())
+    entry = store.list_history()[0]
+    assert entry.saved_request_id is None
+    assert entry.label == "Get profile"
+
+
+def test_matching_looks_through_the_active_environment(store):
+    """A saved {{base}}/me and a sent http://x.test/me are the same request."""
+    env_id = store.save_environment("Local", [KeyValue("base", "http://x.test")])
+    store.set_active_environment(env_id)
+    store.save_request("Get profile", make_request("{{base}}/me"))
+    store.add_history(make_request("http://x.test/me"), make_response())
+    assert store.list_history()[0].label == "Get profile"
+
+
+def test_a_variable_without_a_scheme_still_matches(store):
+    """The scheme is added on the way out, so it has to be added to match."""
+    env_id = store.save_environment("Local", [KeyValue("base", "localhost:8080")])
+    store.set_active_environment(env_id)
+    store.save_request("Banner", make_request("{{base}}/banner"))
+    store.add_history(make_request("http://localhost:8080/banner"), make_response())
+    assert store.list_history()[0].label == "Banner"
+
+
+def test_switching_environments_unnames_an_entry_it_no_longer_describes(store):
+    local = store.save_environment("Local", [KeyValue("base", "http://x.test")])
+    other = store.save_environment("Prod", [KeyValue("base", "https://live.test")])
+    store.save_request("Get profile", make_request("{{base}}/me"))
+    store.add_history(make_request("http://x.test/me"), make_response())
+
+    store.set_active_environment(local)
+    assert store.list_history()[0].label == "Get profile"
+    store.set_active_environment(other)
+    assert store.list_history()[0].label == "http://x.test/me"
+
+
+def test_a_send_that_matches_nothing_saved_keeps_its_url(store):
+    store.save_request("Get profile", make_request("http://x.test/me"))
+    store.add_history(make_request("http://x.test/somewhere-else"), make_response())
+    assert store.list_history()[0].label == "http://x.test/somewhere-else"
+
+
+def test_a_query_string_typed_into_the_url_still_matches_a_saved_param(store):
+    """normalize is what makes two ways of typing the same request compare equal."""
+    store.save_request(
+        "Search", Request(url="http://x.test/find", params=[KeyValue("q", "cats")])
+    )
+    store.add_history(Request(url="http://x.test/find?q=cats"), make_response())
+    assert store.list_history()[0].label == "Search"
+
+
+def test_a_recorded_link_wins_over_a_content_match(store):
+    """Provenance beats resemblance: the link survives editing the request."""
+    exact = store.save_request("The one I sent", make_request("http://x.test/me"))
+    store.save_request("A lookalike", make_request("http://x.test/me"))
+    store.add_history(make_request("http://x.test/me"), make_response(), exact)
+    assert store.list_history()[0].label == "The one I sent"
+
+
+def test_a_single_unlinked_entry_reads_back_named_too(store):
+    store.save_request("Get profile", make_request("http://x.test/me"))
+    entry_id = store.add_history(make_request("http://x.test/me"), make_response())
+    assert store.get_history(entry_id).label == "Get profile"
+

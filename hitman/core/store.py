@@ -15,6 +15,7 @@ from pathlib import Path
 
 from hitman.core.models import KeyValue, Request, Response, normalize
 from hitman.core.scenarios import Scenario, ScenarioResult
+from hitman.core.variables import substitute
 
 ACTIVE_ENVIRONMENT = "active_environment"
 
@@ -81,8 +82,13 @@ CREATE TABLE IF NOT EXISTS scenario_runs (
   created_at    TEXT NOT NULL
 );
 
+-- saved_request_id records which saved request a send came from, so the
+-- history list can show its name. Deliberately not a foreign key: history
+-- outlives the requests it came from, and a deleted one simply stops
+-- resolving to a name.
 CREATE TABLE IF NOT EXISTS history (
   id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  saved_request_id      INTEGER,
   request_json          TEXT NOT NULL,
   engine                TEXT NOT NULL,
   status                INTEGER,
@@ -173,6 +179,15 @@ class HistoryEntry:
     request: Request
     response: Response
     created_at: str
+    saved_request_id: int | None = None
+    # Read back through a join, so a request renamed after the fact shows its
+    # current name, and a deleted one falls back to the URL.
+    saved_name: str | None = None
+
+    @property
+    def label(self) -> str:
+        """What the history list calls this send."""
+        return self.saved_name or self.request.url
 
 
 def _now() -> str:
@@ -211,6 +226,12 @@ class Store:
         if "draft_json" not in columns:
             # Nullable with no default: an existing request has no unsaved work.
             self._conn.execute("ALTER TABLE saved_requests ADD COLUMN draft_json TEXT")
+
+        history_columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(history)")
+        }
+        if "saved_request_id" not in history_columns:
+            self._conn.execute("ALTER TABLE history ADD COLUMN saved_request_id INTEGER")
 
         scenario_columns = {
             row["name"] for row in self._conn.execute("PRAGMA table_info(scenarios)")
@@ -554,14 +575,17 @@ class Store:
 
     # --- history --------------------------------------------------------
 
-    def add_history(self, request: Request, response: Response) -> int:
+    def add_history(
+        self, request: Request, response: Response, saved_request_id: int | None = None
+    ) -> int:
         with self._lock:
             cursor = self._conn.execute(
-                "INSERT INTO history (request_json, engine, status, reason, elapsed_ms,"
-                " size_bytes, content_type, error, curl_exit_code, body_truncated,"
-                " response_headers_json, response_body, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO history (saved_request_id, request_json, engine, status,"
+                " reason, elapsed_ms, size_bytes, content_type, error, curl_exit_code,"
+                " body_truncated, response_headers_json, response_body, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
+                    saved_request_id,
                     json.dumps(normalize(request).to_dict()),
                     response.engine,
                     response.status,
@@ -590,14 +614,55 @@ class Store:
     def list_history(self, limit: int = 100) -> list[HistoryEntry]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM history ORDER BY id DESC LIMIT ?", (limit,)
+                _HISTORY_SELECT + " ORDER BY h.id DESC LIMIT ?", (limit,)
             ).fetchall()
-        return [_row_to_history(row) for row in rows]
+        return self._named([_row_to_history(row) for row in rows])
 
     def get_history(self, entry_id: int) -> HistoryEntry | None:
         with self._lock:
-            row = self._conn.execute("SELECT * FROM history WHERE id = ?", (entry_id,)).fetchone()
-        return _row_to_history(row) if row else None
+            row = self._conn.execute(
+                _HISTORY_SELECT + " WHERE h.id = ?", (entry_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return self._named([_row_to_history(row)])[0]
+
+    def _named(self, entries: list[HistoryEntry]) -> list[HistoryEntry]:
+        """Fill in a name for entries that carry no link to a saved request.
+
+        The link is only recorded for sends made from a loaded saved request.
+        A send typed by hand, imported from curl, or replayed still deserves the
+        name if it is, in substance, a request you have saved — which is the
+        question the history list is really answering.
+
+        Matching is on the fully resolved request, so a saved
+        ``{{base_url}}/users`` is compared as what it would actually send. That
+        makes the match depend on the active environment: switch environments
+        and an old entry stops resolving to a name, which is correct, because
+        under this environment it is no longer that request.
+        """
+        unlinked = [entry for entry in entries if entry.saved_name is None]
+        if not unlinked:
+            return entries  # every entry already knows its name
+
+        # Outside the lock above, deliberately: threading.Lock is not
+        # reentrant and both calls below take it.
+        table = self._saved_signatures()
+        for entry in unlinked:
+            entry.saved_name = table.get(_signature(entry.request))
+        return entries
+
+    def _saved_signatures(self) -> dict[str, str]:
+        """Resolved-request signature -> name, for every saved request."""
+        environment = self.active_environment()
+        variables = environment.as_mapping() if environment else {}
+        table: dict[str, str] = {}
+        for item in self.list_requests():
+            resolved = substitute(item.request, variables).request if variables else item.request
+            # First wins: list_requests is ordered, so two saved requests with
+            # identical content always resolve to the same one of their names.
+            table.setdefault(_signature(resolved), item.name)
+        return table
 
     def clear_history(self) -> None:
         with self._lock:
@@ -667,9 +732,29 @@ def _row_to_saved(row: sqlite3.Row) -> SavedRequest:
     )
 
 
+def _signature(request: Request) -> str:
+    """A comparable form of a request, for asking "are these the same send?".
+
+    normalize is what makes it comparable at all: it splits a query string out
+    of the URL, drops disabled rows and spells out an implied Content-Type, so
+    two requests that differ only in how they were typed compare equal.
+    """
+    return json.dumps(normalize(request).to_dict(), sort_keys=True)
+
+
+# LEFT JOIN, so an entry whose saved request was deleted still comes back —
+# just without a name.
+_HISTORY_SELECT = (
+    "SELECT h.*, s.name AS saved_name FROM history h"
+    " LEFT JOIN saved_requests s ON s.id = h.saved_request_id"
+)
+
+
 def _row_to_history(row: sqlite3.Row) -> HistoryEntry:
     return HistoryEntry(
         id=row["id"],
+        saved_request_id=row["saved_request_id"],
+        saved_name=row["saved_name"],
         request=Request.from_dict(json.loads(row["request_json"])),
         response=Response(
             engine=row["engine"],

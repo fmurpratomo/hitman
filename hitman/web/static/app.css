@@ -171,3 +171,5 @@ button[aria-busy="true"]::after {
 .scenario-meta { display: flex; gap: 8px; margin-bottom: 8px; }
 .scenario-meta input[name="scenario_description"] { flex: 1; }
 .scenario-meta input[name="scenario_folder"] { max-width: 180px; }
+/* History entries sit under a day heading, indented like folder contents. */
+.folder > .entry { padding-left: 18px; }

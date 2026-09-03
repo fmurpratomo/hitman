@@ -6,6 +6,9 @@
 </ul>
 {% endif %}
 <form id="request-form"{% if current %} data-request-id="{{ current.id }}"{% endif %}>
+  {# Provenance for the history list, which shows the name rather than the URL
+     when a send came from a saved request. Every other endpoint ignores it. #}
+  {% if current %}<input type="hidden" name="request_id" value="{{ current.id }}">{% endif %}
   <div class="urlbar">
     <select name="method" aria-label="HTTP method">
       {% for verb in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] %}
