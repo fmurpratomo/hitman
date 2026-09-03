@@ -56,31 +56,40 @@
   {% endfor %}
 </div>
 
+{% macro scenario_row(item) %}
+<div class="entry-row">
+  <button type="button" class="icon run" data-action="post"
+          data-url="/scenarios/{{ item.id }}/run" data-target="#response"
+          title="Run {{ item.name }}" aria-label="Run {{ item.name }}">&#9658;</button>
+  <button type="button" class="entry" data-action="get" data-url="/scenarios/{{ item.id }}"
+          data-target="#builder">
+    <span class="name">{{ item.name }}</span>
+    <span class="muted">{{ item.scenario.steps | length }}</span>
+  </button>
+  <button type="button" class="icon" data-action="post"
+          data-url="/scenarios/{{ item.id }}/duplicate" data-target="#sidebar"
+          title="Duplicate {{ item.name }}"
+          aria-label="Duplicate {{ item.name }}">&#10697;</button>
+  <button type="button" class="icon delete" data-action="delete"
+          data-url="/scenarios/{{ item.id }}" data-target="#sidebar"
+          data-confirm="Delete the scenario {{ item.name }}?"
+          title="Delete {{ item.name }}" aria-label="Delete {{ item.name }}">&times;</button>
+</div>
+{% endmacro %}
+
 <div data-panel="scenarios" class="panel list" hidden>
   <button type="button" class="wide" data-action="get" data-url="/scenarios/new"
           data-target="#builder">+ New scenario</button>
 
-  {% for item in scenarios %}
-  <div class="entry-row">
-    <button type="button" class="icon run" data-action="post"
-            data-url="/scenarios/{{ item.id }}/run" data-target="#response"
-            title="Run {{ item.scenario.name }}"
-            aria-label="Run {{ item.scenario.name }}">&#9658;</button>
-    <button type="button" class="entry" data-action="get" data-url="/scenarios/{{ item.id }}"
-            data-target="#builder">
-      <span class="name">{{ item.scenario.name }}</span>
-      <span class="muted">{{ item.scenario.steps | length }}</span>
-    </button>
-    <button type="button" class="icon" data-action="post"
-            data-url="/scenarios/{{ item.id }}/duplicate" data-target="#sidebar"
-            title="Duplicate {{ item.scenario.name }}"
-            aria-label="Duplicate {{ item.scenario.name }}">&#10697;</button>
-    <button type="button" class="icon delete" data-action="delete"
-            data-url="/scenarios/{{ item.id }}" data-target="#sidebar"
-            data-confirm="Delete the scenario {{ item.scenario.name }}?"
-            title="Delete {{ item.scenario.name }}"
-            aria-label="Delete {{ item.scenario.name }}">&times;</button>
-  </div>
+  {% for folder, items in scenario_groups %}
+    {% if folder %}
+    <details class="folder" open>
+      <summary>{{ folder }} <span class="muted">{{ items | length }}</span></summary>
+      {% for item in items %}{{ scenario_row(item) }}{% endfor %}
+    </details>
+    {% else %}
+      {% for item in items %}{{ scenario_row(item) }}{% endfor %}
+    {% endif %}
   {% else %}
   <p class="empty">No scenarios yet. A scenario runs saved requests in order and
     checks each response.</p>

@@ -149,6 +149,7 @@ def scenario_from_form(form) -> Scenario:
     return Scenario(
         name=str(form.get("scenario_name") or "").strip() or "Untitled scenario",
         description=str(form.get("scenario_description") or "").strip(),
+        folder=str(form.get("scenario_folder") or "").strip(),
         steps=steps,
         on_failure=on_failure if on_failure in ON_FAILURE else "stop",
     )

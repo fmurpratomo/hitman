@@ -294,6 +294,7 @@ def test_a_scenario_survives_a_json_round_trip():
     scenario = Scenario(
         name="Flow",
         description="why",
+        folder="Auth",
         on_failure="continue",
         steps=[
             Step(

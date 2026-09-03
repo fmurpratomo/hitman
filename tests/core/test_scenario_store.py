@@ -147,3 +147,104 @@ def test_clear_runs_empties_the_list(store):
 def test_a_failed_run_is_recorded_as_failed(store):
     run_id = store.add_scenario_run(None, make_result(outcome="failed"))
     assert store.get_scenario_run(run_id).passed is False
+
+
+# --- folders ------------------------------------------------------------
+
+
+def test_a_scenario_defaults_to_no_folder(store):
+    assert store.get_scenario(store.save_scenario(Scenario(name="x"))).folder == ""
+
+
+def test_a_scenario_can_be_saved_into_a_folder(store):
+    scenario_id = store.save_scenario(Scenario(name="x", folder="Checkout"))
+    assert store.get_scenario(scenario_id).folder == "Checkout"
+
+
+def test_folder_names_are_trimmed(store):
+    scenario_id = store.save_scenario(Scenario(name="x", folder="  Checkout  "))
+    saved = store.get_scenario(scenario_id)
+    assert saved.folder == "Checkout"
+    # Trimmed in the JSON too, not just the column the ordering reads.
+    assert saved.scenario.folder == "Checkout"
+
+
+def test_update_can_move_a_scenario_between_folders(store):
+    scenario_id = store.save_scenario(Scenario(name="x", folder="Checkout"))
+    store.update_scenario(scenario_id, Scenario(name="x", folder="Auth"))
+    assert store.get_scenario(scenario_id).folder == "Auth"
+
+
+def test_update_can_take_a_scenario_out_of_its_folder(store):
+    scenario_id = store.save_scenario(Scenario(name="x", folder="Checkout"))
+    store.update_scenario(scenario_id, Scenario(name="x"))
+    assert store.get_scenario(scenario_id).folder == ""
+
+
+def test_list_scenario_folders_is_distinct_and_sorted_and_skips_unfiled(store):
+    store.save_scenario(Scenario(name="a", folder="Checkout"))
+    store.save_scenario(Scenario(name="b", folder="Auth"))
+    store.save_scenario(Scenario(name="c", folder="Checkout"))
+    store.save_scenario(Scenario(name="d"))
+    assert store.list_scenario_folders() == ["Auth", "Checkout"]
+
+
+def test_grouped_puts_folders_first_and_unfiled_last(store):
+    store.save_scenario(Scenario(name="loose"))
+    store.save_scenario(Scenario(name="filed", folder="Checkout"))
+    assert [folder for folder, _ in store.grouped_scenarios()] == ["Checkout", ""]
+
+
+def test_grouped_sorts_scenarios_by_name_within_a_folder(store):
+    store.save_scenario(Scenario(name="zebra", folder="Checkout"))
+    store.save_scenario(Scenario(name="apple", folder="Checkout"))
+    _, items = store.grouped_scenarios()[0]
+    assert [item.name for item in items] == ["apple", "zebra"]
+
+
+def test_duplicate_lands_in_the_same_folder(store):
+    scenario_id = store.save_scenario(Scenario(name="Login", folder="Auth"))
+    copy = store.get_scenario(store.duplicate_scenario(scenario_id))
+    assert copy.folder == "Auth"
+    assert copy.name == "Login (copy)"
+
+
+def test_the_same_name_in_another_folder_does_not_force_a_suffix(store):
+    """Folders are namespaces: two "Smoke" scenarios in different ones is fine."""
+    store.save_scenario(Scenario(name="Smoke (copy)", folder="Other"))
+    scenario_id = store.save_scenario(Scenario(name="Smoke", folder="Auth"))
+    assert store.get_scenario(store.duplicate_scenario(scenario_id)).name == "Smoke (copy)"
+
+
+def test_a_database_without_the_scenario_folder_column_is_migrated(tmp_path):
+    """Anyone who built scenarios before folders existed must keep them."""
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(
+        """
+        CREATE TABLE scenarios (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          scenario_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        """
+    )
+    old.execute(
+        "INSERT INTO scenarios (name, scenario_json, created_at, updated_at)"
+        " VALUES ('legacy', '{\"name\": \"legacy\"}', 'then', 'then')"
+    )
+    old.commit()
+    old.close()
+
+    store = Store(path)
+    try:
+        item = store.list_scenarios()[0]
+        assert item.name == "legacy"
+        assert item.folder == ""
+    finally:
+        store.close()
+

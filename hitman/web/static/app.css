@@ -168,3 +168,6 @@ button[aria-busy="true"]::after {
 .draft-state button { margin-left: auto; color: var(--warn); font-size: 13px;
   padding: 4px 9px; }
 .entry .dot { color: var(--warn); flex: none; }
+.scenario-meta { display: flex; gap: 8px; margin-bottom: 8px; }
+.scenario-meta input[name="scenario_description"] { flex: 1; }
+.scenario-meta input[name="scenario_folder"] { max-width: 180px; }

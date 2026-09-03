@@ -94,6 +94,7 @@ class Scenario:
 
     name: str = ""
     description: str = ""
+    folder: str = ""
     steps: list[Step] = field(default_factory=list)
     on_failure: str = "stop"
 
@@ -106,6 +107,7 @@ class Scenario:
         return cls(
             name=data.get("name", ""),
             description=data.get("description", ""),
+            folder=data.get("folder", ""),
             steps=[Step.from_dict(item) for item in data.get("steps") or []],
             on_failure=on_failure if on_failure in ON_FAILURE else "stop",
         )

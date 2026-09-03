@@ -158,6 +158,12 @@ finds nothing **fails its step** rather than warning: left as a warning, the
 next request sends the literal text `{{token}}` and fails somewhere far away
 from the actual cause.
 
+Scenarios take a folder the same way saved requests do — the box beside the
+description autocompletes from the folders you already have, and typing a new
+name creates it. The **Tests** list groups by folder, one flat level, with
+unfiled scenarios last. A folder is only a label on its scenarios: move the
+last one out and the folder is gone.
+
 ### Running
 
 - **Run** runs what is on screen, saved or not, so you can iterate. The **&#9658;**

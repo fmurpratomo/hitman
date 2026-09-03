@@ -55,9 +55,12 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 
+-- name and folder are mirrored out of scenario_json so the list can be
+-- ordered in SQL, the same bargain the saved_requests table makes.
 CREATE TABLE IF NOT EXISTS scenarios (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   name          TEXT NOT NULL,
+  folder        TEXT NOT NULL DEFAULT '',
   scenario_json TEXT NOT NULL,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
@@ -147,6 +150,10 @@ class SavedScenario:
     def name(self) -> str:
         return self.scenario.name
 
+    @property
+    def folder(self) -> str:
+        return self.scenario.folder
+
 
 @dataclass
 class ScenarioRun:
@@ -204,6 +211,14 @@ class Store:
         if "draft_json" not in columns:
             # Nullable with no default: an existing request has no unsaved work.
             self._conn.execute("ALTER TABLE saved_requests ADD COLUMN draft_json TEXT")
+
+        scenario_columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(scenarios)")
+        }
+        if "folder" not in scenario_columns:
+            self._conn.execute(
+                "ALTER TABLE scenarios ADD COLUMN folder TEXT NOT NULL DEFAULT ''"
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -397,21 +412,35 @@ class Store:
 
     def save_scenario(self, scenario: Scenario) -> int:
         stamp = _now()
+        scenario = replace(scenario, folder=scenario.folder.strip())
         with self._lock:
             cursor = self._conn.execute(
-                "INSERT INTO scenarios (name, scenario_json, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?)",
-                (scenario.name, json.dumps(scenario.to_dict()), stamp, stamp),
+                "INSERT INTO scenarios (name, folder, scenario_json, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    scenario.name,
+                    scenario.folder,
+                    json.dumps(scenario.to_dict()),
+                    stamp,
+                    stamp,
+                ),
             )
             self._conn.commit()
             return int(cursor.lastrowid)
 
     def update_scenario(self, scenario_id: int, scenario: Scenario) -> None:
+        scenario = replace(scenario, folder=scenario.folder.strip())
         with self._lock:
             self._conn.execute(
-                "UPDATE scenarios SET name = ?, scenario_json = ?, updated_at = ?"
-                " WHERE id = ?",
-                (scenario.name, json.dumps(scenario.to_dict()), _now(), scenario_id),
+                "UPDATE scenarios SET name = ?, folder = ?, scenario_json = ?,"
+                " updated_at = ? WHERE id = ?",
+                (
+                    scenario.name,
+                    scenario.folder,
+                    json.dumps(scenario.to_dict()),
+                    _now(),
+                    scenario_id,
+                ),
             )
             self._conn.commit()
 
@@ -424,8 +453,25 @@ class Store:
 
     def list_scenarios(self) -> list[SavedScenario]:
         with self._lock:
-            rows = self._conn.execute("SELECT * FROM scenarios ORDER BY name").fetchall()
+            rows = self._conn.execute(
+                # Folders first, then unfiled; alphabetical within each.
+                "SELECT * FROM scenarios ORDER BY (folder = '') ASC, folder ASC, name ASC"
+            ).fetchall()
         return [_row_to_scenario(row) for row in rows]
+
+    def list_scenario_folders(self) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT folder FROM scenarios WHERE folder <> '' ORDER BY folder"
+            ).fetchall()
+        return [row["folder"] for row in rows]
+
+    def grouped_scenarios(self) -> list[tuple[str, list[SavedScenario]]]:
+        """Scenarios as (folder, items), folders first and unfiled last."""
+        groups: dict[str, list[SavedScenario]] = {}
+        for item in self.list_scenarios():
+            groups.setdefault(item.folder, []).append(item)
+        return sorted(groups.items(), key=lambda pair: (pair[0] == "", pair[0]))
 
     def delete_scenario(self, scenario_id: int) -> None:
         with self._lock:
@@ -443,7 +489,11 @@ class Store:
         original = self.get_scenario(scenario_id)
         if original is None:
             return None
-        taken = {item.scenario.name for item in self.list_scenarios()}
+        taken = {
+            item.scenario.name
+            for item in self.list_scenarios()
+            if item.folder == original.folder
+        }
         name = f"{original.scenario.name} (copy)"
         suffix = 2
         while name in taken:

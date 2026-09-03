@@ -40,7 +40,8 @@ def render(http_request: HttpRequest, template: str, context: dict) -> HTMLRespo
         "history": store.list_history(50),
         "environments": store.list_environments(),
         "active_env": store.active_environment(),
-        "scenarios": store.list_scenarios(),
+        "scenario_groups": store.grouped_scenarios(),
+        "scenario_folders": store.list_scenario_folders(),
         "runs": store.list_scenario_runs(20),
         # Vocabulary and blank rows the scenario editor's macros need. They are
         # constants, but the editor is assembled from macros that cannot import

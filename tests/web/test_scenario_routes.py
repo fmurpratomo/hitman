@@ -408,3 +408,68 @@ def test_a_scenario_runs_the_checkpoint_not_your_unsaved_edits(client, app, fixt
     assert step.request.url == f"{fixture_server}/json"
     assert step.outcome == "passed"
 
+
+# --- folders ------------------------------------------------------------
+
+
+def test_the_editor_offers_a_folder_box_that_autocompletes(client, app):
+    app.state.store.save_scenario(Scenario(name="Existing", folder="Checkout"))
+    reply = client.get("/scenarios/new")
+    assert 'name="scenario_folder"' in reply.text
+    assert '<datalist id="scenario-folder-list">' in reply.text
+    assert '<option value="Checkout">' in reply.text
+
+
+def test_saving_into_a_folder(client, app):
+    client.post("/scenarios", data=scenario_form(scenario_folder="Checkout"))
+    assert app.state.store.list_scenarios()[0].folder == "Checkout"
+
+
+def test_the_folder_comes_back_in_the_editor(client, app):
+    scenario_id = app.state.store.save_scenario(Scenario(name="Login", folder="Auth"))
+    reply = client.get(f"/scenarios/{scenario_id}")
+    assert 'name="scenario_folder" value="Auth"' in reply.text
+
+
+def test_update_moves_a_scenario_between_folders(client, app):
+    scenario_id = app.state.store.save_scenario(Scenario(name="Login", folder="Auth"))
+    client.put(f"/scenarios/{scenario_id}", data=scenario_form(scenario_folder="Checkout"))
+    assert app.state.store.get_scenario(scenario_id).folder == "Checkout"
+
+
+def test_the_sidebar_groups_scenarios_under_their_folder(client, app):
+    app.state.store.save_scenario(Scenario(name="Login", folder="Auth"))
+    app.state.store.save_scenario(Scenario(name="Ad hoc"))
+    sidebar = client.get("/scenarios").text
+    assert '<details class="folder" open>' in sidebar
+    assert "<summary>Auth" in sidebar
+    assert "Login" in sidebar and "Ad hoc" in sidebar
+
+
+def test_an_unfiled_scenario_is_not_wrapped_in_a_folder(client, app):
+    app.state.store.save_scenario(Scenario(name="Ad hoc"))
+    assert "<summary>" not in client.get("/scenarios").text
+
+
+def test_running_and_deleting_still_work_from_inside_a_folder(client, app, fixture_server):
+    request_id = app.state.store.save_request("JSON", Request(url=f"{fixture_server}/json"))
+    scenario_id = app.state.store.save_scenario(
+        Scenario(
+            name="Smoke",
+            folder="Checkout",
+            steps=[Step(request_id=request_id,
+                        assertions=[Assertion(kind="status", op="eq", value="200")])],
+        )
+    )
+    assert "PASSED" in client.post(f"/scenarios/{scenario_id}/run").text
+    client.delete(f"/scenarios/{scenario_id}")
+    assert app.state.store.get_scenario(scenario_id) is None
+
+
+def test_a_folder_with_only_deleted_scenarios_disappears(client, app):
+    """Folders exist only as a label on their scenarios, as with saved requests."""
+    scenario_id = app.state.store.save_scenario(Scenario(name="Login", folder="Auth"))
+    client.delete(f"/scenarios/{scenario_id}")
+    assert app.state.store.list_scenario_folders() == []
+    assert "<summary>Auth" not in client.get("/scenarios").text
+
