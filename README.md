@@ -55,6 +55,19 @@ python3 -m venv .venv
 .venv/bin/python -m hitman
 ```
 
+For a shorter command, add a shell alias from the project root:
+
+```bash
+alias hitman='.venv/bin/python -m hitman'
+```
+
+Then run:
+
+```bash
+hitmanh
+hitman --port 9000 --no-browser
+```
+
 Every later run is just the last line. Flags work the same:
 `.venv/bin/python -m hitman --port 9000 --no-browser`.
 
