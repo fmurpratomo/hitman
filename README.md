@@ -64,7 +64,7 @@ alias hitman='.venv/bin/python -m hitman'
 Then run:
 
 ```bash
-hitmanh
+hitman
 hitman --port 9000 --no-browser
 ```
 
