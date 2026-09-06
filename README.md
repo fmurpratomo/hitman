@@ -4,11 +4,45 @@ A local API testing client. Send HTTP requests to services on `localhost` or
 to public APIs, import and export curl commands, and keep a replayable
 history of everything you sent.
 
-## Running
+## Installing Python
 
-Needs **Python 3.9 or newer** — the version already on your machine if you are
-on macOS or most Linux distributions, so no CPython install is required. Any
-stdlib newer than 3.9 is deliberately avoided for that reason.
+Hitman needs **Python 3.9 or newer**. Confirm your installed version with:
+
+```bash
+python3 --version
+```
+
+If it is missing or older than 3.9, install it for your platform:
+
+- **macOS:** Install with [Homebrew](https://brew.sh/):
+
+  ```bash
+  brew install python
+  ```
+
+  Or download the installer from [python.org](https://www.python.org/downloads/macos/).
+
+- **Linux:** Use your distribution's package manager. For Debian or Ubuntu:
+
+  ```bash
+  sudo apt update
+  sudo apt install python3 python3-venv python3-pip
+  ```
+
+  Other distributions may provide equivalent packages such as `python3`,
+  `python3-pip`, and `python3-virtualenv`.
+
+- **Windows:** In PowerShell, install Python with:
+
+  ```powershell
+  winget install Python.Python.3.13
+  ```
+
+  Or download it from [python.org](https://www.python.org/downloads/windows/).
+  When using the installer, select **Add Python to PATH**. Open a new terminal,
+  then confirm the installation with `py --version`.
+
+## Running
 
 ### With python3 only
 
