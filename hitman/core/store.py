@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hitman.core.loadtest import LoadResult, LoadTest
 from hitman.core.models import KeyValue, Request, Response, normalize
 from hitman.core.scenarios import Scenario, ScenarioResult
 from hitman.core.variables import substitute
@@ -26,6 +27,8 @@ STORED_BODY_LIMIT = 256 * 1024
 # and kept for fewer entries: twenty steps of 256 KB is a 5 MB row.
 SCENARIO_RUN_LIMIT = 100
 RUN_BODY_LIMIT = 64 * 1024
+
+LOAD_RUN_LIMIT = 100
 
 _SCHEMA = """
 -- request_json is the checkpoint: the state as of the last explicit update.
@@ -80,6 +83,29 @@ CREATE TABLE IF NOT EXISTS scenario_runs (
   elapsed_ms    REAL,
   result_json   TEXT NOT NULL,
   created_at    TEXT NOT NULL
+);
+
+-- Performance tests. name and folder are mirrored out of test_json, as above.
+CREATE TABLE IF NOT EXISTS load_tests (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  folder     TEXT NOT NULL DEFAULT '',
+  test_json  TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- A run stores only its summary - counts, percentiles, the timeline - never a
+-- response, so a row stays small however long the test ran.
+CREATE TABLE IF NOT EXISTS load_runs (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  load_test_id INTEGER,
+  name         TEXT NOT NULL,
+  requests     INTEGER NOT NULL DEFAULT 0,
+  failed       INTEGER NOT NULL DEFAULT 0,
+  elapsed_ms   REAL,
+  result_json  TEXT NOT NULL,
+  created_at   TEXT NOT NULL
 );
 
 -- saved_request_id records which saved request a send came from, so the
@@ -171,6 +197,32 @@ class ScenarioRun:
     @property
     def passed(self) -> bool:
         return self.result.passed
+
+
+@dataclass
+class SavedLoadTest:
+    id: int
+    test: LoadTest
+    created_at: str
+    updated_at: str
+
+    @property
+    def name(self) -> str:
+        return self.test.name
+
+    @property
+    def folder(self) -> str:
+        return self.test.folder
+
+
+@dataclass
+class LoadRunRecord:
+    """A finished performance test, as stored. The one in flight is a LoadRun."""
+
+    id: int
+    load_test_id: int | None
+    result: LoadResult
+    created_at: str
 
 
 @dataclass
@@ -573,6 +625,124 @@ class Store:
             self._conn.execute("DELETE FROM scenario_runs")
             self._conn.commit()
 
+    # --- performance tests ----------------------------------------------
+
+    def save_load_test(self, test: LoadTest) -> int:
+        stamp = _now()
+        test = replace(test, folder=test.folder.strip())
+        with self._lock:
+            cursor = self._conn.execute(
+                "INSERT INTO load_tests (name, folder, test_json, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (test.name, test.folder, json.dumps(test.to_dict()), stamp, stamp),
+            )
+            self._conn.commit()
+            return int(cursor.lastrowid)
+
+    def update_load_test(self, load_test_id: int, test: LoadTest) -> None:
+        test = replace(test, folder=test.folder.strip())
+        with self._lock:
+            self._conn.execute(
+                "UPDATE load_tests SET name = ?, folder = ?, test_json = ?, updated_at = ?"
+                " WHERE id = ?",
+                (test.name, test.folder, json.dumps(test.to_dict()), _now(), load_test_id),
+            )
+            self._conn.commit()
+
+    def get_load_test(self, load_test_id: int) -> SavedLoadTest | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM load_tests WHERE id = ?", (load_test_id,)
+            ).fetchone()
+        return _row_to_load_test(row) if row else None
+
+    def list_load_tests(self) -> list[SavedLoadTest]:
+        with self._lock:
+            rows = self._conn.execute(
+                # Folders first, then unfiled; alphabetical within each.
+                "SELECT * FROM load_tests ORDER BY (folder = '') ASC, folder ASC, name ASC"
+            ).fetchall()
+        return [_row_to_load_test(row) for row in rows]
+
+    def list_load_test_folders(self) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT folder FROM load_tests WHERE folder <> '' ORDER BY folder"
+            ).fetchall()
+        return [row["folder"] for row in rows]
+
+    def grouped_load_tests(self) -> list[tuple[str, list[SavedLoadTest]]]:
+        """Performance tests as (folder, items), folders first and unfiled last."""
+        groups: dict[str, list[SavedLoadTest]] = {}
+        for item in self.list_load_tests():
+            groups.setdefault(item.folder, []).append(item)
+        return sorted(groups.items(), key=lambda pair: (pair[0] == "", pair[0]))
+
+    def delete_load_test(self, load_test_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM load_tests WHERE id = ?", (load_test_id,))
+            # Past runs outlive the test, as scenario runs outlive scenarios.
+            self._conn.execute(
+                "UPDATE load_runs SET load_test_id = NULL WHERE load_test_id = ?",
+                (load_test_id,),
+            )
+            self._conn.commit()
+
+    def duplicate_load_test(self, load_test_id: int) -> int | None:
+        original = self.get_load_test(load_test_id)
+        if original is None:
+            return None
+        taken = {item.name for item in self.list_load_tests() if item.folder == original.folder}
+        name = f"{original.name} (copy)"
+        suffix = 2
+        while name in taken:
+            name = f"{original.name} (copy {suffix})"
+            suffix += 1
+        return self.save_load_test(replace(original.test, name=name))
+
+    def add_load_run(self, load_test_id: int | None, result: LoadResult) -> int:
+        with self._lock:
+            cursor = self._conn.execute(
+                "INSERT INTO load_runs (load_test_id, name, requests, failed, elapsed_ms,"
+                " result_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    load_test_id,
+                    result.name,
+                    result.requests,
+                    result.failed,
+                    result.elapsed_ms,
+                    json.dumps(result.to_dict()),
+                    _now(),
+                ),
+            )
+            run_id = int(cursor.lastrowid)
+            self._conn.execute(
+                "DELETE FROM load_runs WHERE id NOT IN"
+                " (SELECT id FROM load_runs ORDER BY id DESC LIMIT ?)",
+                (LOAD_RUN_LIMIT,),
+            )
+            self._conn.commit()
+            return run_id
+
+    def list_load_runs(self, limit: int = 20) -> list[LoadRunRecord]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM load_runs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [_row_to_load_run(row) for row in rows]
+
+    def get_load_run(self, run_id: int) -> LoadRunRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM load_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        return _row_to_load_run(row) if row else None
+
+    def clear_load_runs(self) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM load_runs")
+            self._conn.commit()
+
     # --- history --------------------------------------------------------
 
     def add_history(
@@ -701,6 +871,24 @@ def _row_to_run(row: sqlite3.Row) -> ScenarioRun:
         id=row["id"],
         scenario_id=row["scenario_id"],
         result=ScenarioResult.from_dict(json.loads(row["result_json"])),
+        created_at=row["created_at"],
+    )
+
+
+def _row_to_load_test(row: sqlite3.Row) -> SavedLoadTest:
+    return SavedLoadTest(
+        id=row["id"],
+        test=LoadTest.from_dict(json.loads(row["test_json"])),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_load_run(row: sqlite3.Row) -> LoadRunRecord:
+    return LoadRunRecord(
+        id=row["id"],
+        load_test_id=row["load_test_id"],
+        result=LoadResult.from_dict(json.loads(row["result_json"])),
         created_at=row["created_at"],
     )
 

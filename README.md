@@ -239,6 +239,52 @@ last one out and the folder is gone.
   already holds every request and response, and a twenty-step scenario would
   otherwise flush the history you were keeping by hand.
 
+## Performance tests
+
+The **Performance** tab puts a saved request or a scenario under load and
+measures how it holds up. A test has:
+
+- **Target** — one saved request, or a whole scenario. With a scenario, every
+  pass runs all of its steps, checks and captures included, so a flow that logs
+  in and then fetches a page is measured as that flow rather than as loose
+  requests that would fail without the token.
+- **Users** — how many virtual users send at once, up to 200. Each one repeats
+  the target back to back, with no pause, until the test stops.
+- **Ramp-up** — users start evenly spread over this many seconds instead of
+  all at once.
+- **Stop after** — a number of **seconds**, or a number of **iterations**. One
+  iteration is one send of the request, or one full pass through the scenario.
+
+Pressing **Run** starts the test and the report updates every second while it
+runs: requests, throughput, failure rate, latency percentiles (min, mean, p50,
+p90, p95, p99, max), a requests-per-second chart, and a count per status code.
+A scenario run adds a row per step and how many passes failed. **Stop** ends a
+run early, and the users first finish the request they are on. Only one test
+runs at a time, because two load tests on one machine would each be measuring
+the other.
+
+What to know when reading the numbers:
+
+- A request **fails** when it gets no response, or a 4xx or 5xx status. A
+  scenario pass fails the way a scenario run does, so a failed check counts
+  even when every response was a 200.
+- Requests always go out through **httpx**, and each user **keeps its
+  connection open** between sends, as a browser or an app would. Opening a
+  fresh connection per request would mostly measure TCP and TLS handshakes.
+  Cookies are still cleared after every send, so a request means the same thing
+  under load as it does in the builder.
+- Percentiles are accurate to within 1%. Responses are summarised as they
+  arrive rather than kept, which is what lets an hour-long test run in constant
+  memory.
+- The test runs **on your machine, in Python**, so at high throughput the
+  client itself can become the bottleneck, and its own queueing shows up as
+  latency. When numbers at that scale matter, confirm them with a dedicated
+  load-testing tool.
+- Performance sends are **not** written to the send history. The last 100 runs
+  are kept under **Recent runs**, as their summaries only.
+
+Only load-test servers you run or have permission to test.
+
 ## Not supported yet
 
 Auth helper forms, Postman collection import/export, multipart file upload,

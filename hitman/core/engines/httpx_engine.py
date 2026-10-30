@@ -47,6 +47,23 @@ def describe_error(exc: Exception, request: Request) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+def _to_response(engine: str, reply: httpx.Response, started: float) -> Response:
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    content_type = reply.headers.get("content-type", "")
+    body, truncated, size = decode_body(reply.content, content_type)
+    return Response(
+        engine=engine,
+        status=reply.status_code,
+        reason=reply.reason_phrase,
+        headers=list(reply.headers.items()),
+        body=body,
+        body_truncated=truncated,
+        size_bytes=size,
+        elapsed_ms=elapsed_ms,
+        content_type=content_type,
+    )
+
+
 class HttpxEngine:
     name = "httpx"
 
@@ -70,18 +87,58 @@ class HttpxEngine:
                 elapsed_ms=(time.perf_counter() - started) * 1000,
                 error=describe_error(exc, request),
             )
+        return _to_response(self.name, reply, started)
 
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        content_type = reply.headers.get("content-type", "")
-        body, truncated, size = decode_body(reply.content, content_type)
-        return Response(
-            engine=self.name,
-            status=reply.status_code,
-            reason=reply.reason_phrase,
-            headers=list(reply.headers.items()),
-            body=body,
-            body_truncated=truncated,
-            size_bytes=size,
-            elapsed_ms=elapsed_ms,
-            content_type=content_type,
-        )
+
+class HttpxSession:
+    """An httpx engine that keeps its connections open between sends.
+
+    HttpxEngine opens a fresh client per send, which is right for the builder.
+    Under load it is wrong: every request would pay for a new TCP and TLS
+    handshake, and a performance test would measure connection setup rather
+    than the API. A performance test gives each virtual user one session, so it
+    reuses its connection the way a real client does.
+
+    Cookies are cleared after every send, as a fresh client would have none: a
+    request must mean the same thing under load as it does in the builder.
+
+    httpx fixes TLS verification per client, so there is one client per
+    setting. A session belongs to one thread; it is not safe to share.
+    """
+
+    name = "httpx"
+
+    def __init__(self) -> None:
+        self._clients: dict[bool, httpx.Client] = {}
+
+    def send(self, request: Request) -> Response:
+        started = time.perf_counter()
+        try:
+            client = self._clients.get(request.verify_tls)
+            if client is None:
+                client = self._clients[request.verify_tls] = httpx.Client(
+                    verify=request.verify_tls
+                )
+            reply = client.request(
+                request.method.upper(),
+                request.full_url(),
+                headers=request.effective_headers(),
+                content=request.body_bytes(),
+                follow_redirects=request.follow_redirects,
+                timeout=request.timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 - every failure becomes a Response
+            return Response(
+                engine=self.name,
+                elapsed_ms=(time.perf_counter() - started) * 1000,
+                error=describe_error(exc, request),
+            )
+        finally:
+            for open_client in self._clients.values():
+                open_client.cookies.clear()
+        return _to_response(self.name, reply, started)
+
+    def close(self) -> None:
+        for client in self._clients.values():
+            client.close()
+        self._clients.clear()

@@ -62,6 +62,11 @@ class _Handler(BaseHTTPRequestHandler):
             )
         elif path == "/html":
             self._respond(200, b"<script>alert(1)</script>", "text/html")
+        elif path == "/set-cookie":
+            self.send_response(200)
+            self.send_header("Set-Cookie", "session=abc; Path=/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
         elif path.startswith("/status/"):
             self._respond(int(path.rsplit("/", 1)[1]), b"{}")
         else:

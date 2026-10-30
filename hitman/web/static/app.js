@@ -35,12 +35,47 @@ function captureTabs(root) {
 
 function swapInto(destination, html) {
   const tabs = captureTabs(destination);
+  // Likewise a <details> with an id: a live report is redrawn every second,
+  // and a table you just opened must not snap shut under you.
+  const opened = [...destination.querySelectorAll('details[id][open]')].map((item) => item.id);
   destination.innerHTML = html;
   destination.querySelectorAll('[data-tabs]').forEach((bar) => {
     const wanted = tabs[bar.dataset.tabs];
     if (wanted && bar.querySelector(`button[data-tab="${wanted}"]`)) {
       selectTab(bar, wanted);
     }
+  });
+  opened.forEach((id) => {
+    const item = destination.querySelector(`details[id="${id}"]`);
+    if (item) item.open = true;
+  });
+  schedulePolls(destination);
+}
+
+// A fragment that is still changing on the server — a performance test in
+// flight — carries a [data-poll] element. It is fetched again after a pause and
+// the reply swapped into data-poll-target, which schedules the next one; a
+// reply with no data-poll in it ends the loop. So does anything else replacing
+// the element: a poll whose element has left the page is dropped, reply and all.
+const POLL_MS = 1000;
+
+function schedulePolls(root) {
+  root.querySelectorAll('[data-poll]').forEach((element) => {
+    setTimeout(async () => {
+      if (!element.isConnected) return;
+      try {
+        const reply = await fetch(element.dataset.poll);
+        const text = await reply.text();
+        if (!element.isConnected) return;
+        if (!reply.ok) {
+          toast(text);
+          return;
+        }
+        swap(text, element.dataset.pollTarget);
+      } catch (error) {
+        toast('Lost track of the run: ' + error.message);
+      }
+    }, POLL_MS);
   });
 }
 

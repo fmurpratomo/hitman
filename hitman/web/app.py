@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from hitman.core.engines.curl_engine import curl_available
 from hitman.core.store import Store
 from hitman.web.bodyview import pretty_lines
+from hitman.web.charts import nice_ceiling
 
 BASE_DIR = Path(__file__).parent
 DEFAULT_DB = os.environ.get("HITMAN_DB", "data/hitman.db")
@@ -22,6 +23,11 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         yield
+        # A performance test still running would otherwise go on sending, and
+        # then try to record itself in a closed database.
+        for run in app.state.live_loads.values():
+            run.stop()
+            run.wait(timeout=5)
         app.state.store.close()
 
     app = FastAPI(title="Hitman", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -32,7 +38,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     # A display helper, not markup: the run report shows a body per step and
     # cannot precompute one list per step in the route.
     app.state.templates.env.globals["pretty_lines"] = pretty_lines
+    app.state.templates.env.globals["nice_ceiling"] = nice_ceiling
     app.state.curl_available = curl_available()
+    # Performance tests in flight, by token. See the performance routes.
+    app.state.live_loads = {}
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
     @app.middleware("http")

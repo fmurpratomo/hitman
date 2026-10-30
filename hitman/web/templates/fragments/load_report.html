@@ -1,0 +1,163 @@
+{% set token = token if token is defined else None %}
+{% macro ms(value) %}{% if value < 10 %}{{ "%.1f" | format(value) }}ms{% elif value < 10000 %}{{ value | round | int }}ms{% else %}{{ "%.1f" | format(value / 1000) }}s{% endif %}{% endmacro %}
+{% macro rate(value) %}{% if value < 100 %}{{ "%.1f" | format(value) }}{% else %}{{ "{:,}".format(value | round | int) }}{% endif %}{% endmacro %}
+
+{% if result.live and token %}
+{# app.js fetches this again after a pause and swaps the reply over the pane.
+   The reply for a finished run carries no data-poll, which ends the loop. #}
+<div data-poll="/performance/live/{{ token }}" data-poll-target="#response" hidden></div>
+{% endif %}
+
+{% for note in result.notes %}
+<p class="warnings">{{ note }}</p>
+{% endfor %}
+
+<div class="status-line">
+  <span class="badge {{ 's3' if result.live else '' }}">{{ result.state | upper }}</span>
+  <span class="name">{{ result.name }}</span>
+  <span class="muted">{{ result.target }}</span>
+  <span class="ms">{{ result.users }} users{% if result.ramp_up_s %}, {{ result.ramp_up_s }}s ramp-up{% endif %}</span>
+  <span class="engine">via {{ result.engine }}</span>
+  {% if result.environment %}<span class="muted">env {{ result.environment }}</span>{% endif %}
+  {% if result.state == 'running' and token %}
+  <button type="button" class="danger load-stop" data-action="post"
+          data-url="/performance/live/{{ token }}/stop" data-target="#response">Stop</button>
+  {% endif %}
+</div>
+
+<div class="load-progress">
+  {% if result.live %}<progress value="{{ result.progress }}" max="1"></progress>{% endif %}
+  <span class="ms">
+    {{ "%.1f" | format(result.elapsed_ms / 1000) }}s{% if result.stop_after == 'seconds' %} of {{ result.limit }}s{% endif %}
+    &middot; {{ "{:,}".format(result.iterations) }}{% if result.stop_after == 'iterations' %} of {{ "{:,}".format(result.limit) }}{% endif %} iterations
+    {% if result.state == 'stopping' %}&middot; waiting for requests in flight{% endif %}
+  </span>
+</div>
+
+<div class="tiles">
+  <div class="tile">
+    <span class="tile-label">Requests</span>
+    <span class="tile-value">{{ "{:,}".format(result.requests) }}</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Throughput</span>
+    <span class="tile-value">{{ rate(result.rps) }} <small>req/s</small></span>
+  </div>
+  <div class="tile" title="A request fails when it gets no response, or a 4xx or 5xx status.">
+    <span class="tile-label">Failed</span>
+    <span class="tile-value{% if result.failed %} bad{% endif %}">{{ "%.1f" | format(result.failed_pct) }}%</span>
+    <span class="tile-note">{{ "{:,}".format(result.failed) }} {{ 'request' if result.failed == 1 else 'requests' }}</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">p95 latency</span>
+    <span class="tile-value">{{ ms(result.latency.p95) }}</span>
+  </div>
+</div>
+
+<h3 class="report-heading">Latency</h3>
+<table class="stats">
+  <thead>
+    <tr><th>min</th><th>mean</th><th>p50</th><th>p90</th><th>p95</th><th>p99</th><th>max</th></tr>
+  </thead>
+  <tbody>
+    {% set lat = result.latency %}
+    <tr>
+      <td>{{ ms(lat.min) }}</td><td>{{ ms(lat.mean) }}</td><td>{{ ms(lat.p50) }}</td>
+      <td>{{ ms(lat.p90) }}</td><td>{{ ms(lat.p95) }}</td><td>{{ ms(lat.p99) }}</td><td>{{ ms(lat.max) }}</td>
+    </tr>
+  </tbody>
+</table>
+
+{% if result.timeline %}
+{% set peak = result.timeline | map(attribute='rps') | max %}
+{% set ceiling = nice_ceiling(peak) %}
+{% set any_failed = result.timeline | selectattr('failed') | list %}
+{% set span = result.timeline[-1].start_s + result.timeline[-1].width_s %}
+<h3 class="report-heading">Throughput <span class="muted">requests per second</span></h3>
+{% if any_failed %}
+<div class="legend">
+  <span><i class="key ok"></i>Succeeded</span>
+  <span><i class="key bad"></i>Failed</span>
+</div>
+{% endif %}
+<div class="chart" role="img"
+     aria-label="Requests per second over {{ span }} seconds, peaking at {{ rate(peak) }}. The table below has every value.">
+  <div class="chart-y" aria-hidden="true">
+    <span>{{ rate(ceiling) }}</span><span>{{ rate(ceiling / 2) }}</span><span>0</span>
+  </div>
+  <div class="chart-plot">
+    {% for slice in result.timeline %}
+    <div class="bar{% if loop.index > loop.length / 2 %} late{% endif %}"
+         data-tip="{{ slice.start_s }}–{{ slice.start_s + slice.width_s }}s · {{ rate(slice.rps) }} req/s{% if slice.failed %} · {{ slice.failed }} failed{% endif %}{% if slice.requests %} · mean {{ ms(slice.mean_ms) }}{% endif %}">
+      {% if slice.requests - slice.failed %}<span class="seg ok" style="height: {{ 100 * (slice.rps - slice.failed_rps) / ceiling }}%"></span>{% endif %}
+      {% if slice.failed %}<span class="seg bad" style="height: {{ 100 * slice.failed_rps / ceiling }}%"></span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <div class="chart-x" aria-hidden="true"><span>0s</span><span>{{ span }}s</span></div>
+</div>
+<details class="run-body" id="load-timeline-table">
+  <summary>Show as table</summary>
+  <table class="stats">
+    <thead><tr><th>Seconds</th><th>req/s</th><th>Requests</th><th>Failed</th><th>Mean</th></tr></thead>
+    <tbody>
+      {% for slice in result.timeline %}
+      <tr>
+        <td>{{ slice.start_s }}–{{ slice.start_s + slice.width_s }}</td><td>{{ rate(slice.rps) }}</td>
+        <td>{{ slice.requests }}</td><td>{{ slice.failed }}</td>
+        <td>{% if slice.requests %}{{ ms(slice.mean_ms) }}{% else %}&ndash;{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
+
+<h3 class="report-heading">Responses</h3>
+{% if result.statuses %}
+<div class="codes">
+  {% for code, count in result.statuses %}
+  <span><span class="badge {{ 'err' if code == 'ERR' else 's' ~ code[0] }}">{{ code }}</span> {{ "{:,}".format(count) }}</span>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty">No responses yet.</p>
+{% endif %}
+
+{% if result.target_kind == 'scenario' %}
+<h3 class="report-heading">Scenario passes</h3>
+<p class="ms">
+  {{ "{:,}".format(result.iterations) }} passes &middot;
+  <span class="{{ 'warn' if result.iterations_failed else '' }}">{{ "{:,}".format(result.iterations_failed) }} failed</span> &middot;
+  mean {{ ms(result.iteration_latency.mean) }} &middot; p95 {{ ms(result.iteration_latency.p95) }}
+</p>
+{% endif %}
+
+{% if result.target_kind == 'scenario' or result.labels | length > 1 %}
+<h3 class="report-heading">By request</h3>
+<table class="stats by-label">
+  <thead>
+    <tr><th>Request</th><th>Sent</th><th>Failed</th><th>mean</th><th>p95</th><th>max</th></tr>
+  </thead>
+  <tbody>
+    {% for row in result.labels %}
+    <tr>
+      <td>{{ row.label }}</td><td>{{ "{:,}".format(row.requests) }}</td>
+      <td>{{ "{:,}".format(row.failed) }}</td><td>{{ ms(row.latency.mean) }}</td>
+      <td>{{ ms(row.latency.p95) }}</td><td>{{ ms(row.latency.max) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if result.errors %}
+<h3 class="report-heading">Errors</h3>
+<table class="stats errors">
+  <tbody>
+    {% for message, count in result.errors %}
+    <tr><td>{{ "{:,}".format(count) }}</td><td>{{ message }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
