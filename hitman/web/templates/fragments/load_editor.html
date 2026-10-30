@@ -1,0 +1,77 @@
+{% set current = current if current is defined else None %}
+
+<form id="load-form">
+  {% if current %}<input type="hidden" name="load_test_id" value="{{ current.id }}">{% endif %}
+  <div class="urlbar">
+    <input type="text" name="load_name" value="{{ test.name }}"
+           placeholder="Performance test name, e.g. Place detail at 50 users" autocomplete="off">
+    <button type="button" class="primary" data-action="post" data-url="/performance/run"
+            data-form="#load-form" data-target="#response">Run</button>
+  </div>
+
+  <div class="scenario-meta">
+    <input type="text" name="load_description" value="{{ test.description }}"
+           placeholder="What this test is for (optional)" autocomplete="off">
+    <input type="text" name="load_folder" value="{{ test.folder }}"
+           list="load-folder-list" placeholder="Folder (optional)" autocomplete="off">
+    <datalist id="load-folder-list">
+      {% for name in load_folders %}<option value="{{ name }}"></option>{% endfor %}
+    </datalist>
+  </div>
+
+  <div class="load-fields">
+    <label class="target">Target
+      <select name="target">
+        <option value="">— pick a saved request or a scenario —</option>
+        <optgroup label="Saved requests">
+          {% for folder, items in saved_groups %}{% for item in items %}
+          <option value="request:{{ item.id }}" {% if test.target_key == 'request:' ~ item.id %}selected{% endif %}>{{ item.request.method }} · {% if folder %}{{ folder }} / {% endif %}{{ item.name }}</option>
+          {% endfor %}{% endfor %}
+        </optgroup>
+        <optgroup label="Scenarios">
+          {% for folder, items in scenario_groups %}{% for item in items %}
+          <option value="scenario:{{ item.id }}" {% if test.target_key == 'scenario:' ~ item.id %}selected{% endif %}>{% if folder %}{{ folder }} / {% endif %}{{ item.name }} ({{ item.scenario.steps | length }} steps)</option>
+          {% endfor %}{% endfor %}
+        </optgroup>
+      </select>
+    </label>
+    <label>Users
+      <input type="number" name="users" value="{{ test.users }}" min="1"
+             max="{{ load_limits.users }}" required>
+    </label>
+    <label>Ramp-up seconds
+      <input type="number" name="ramp_up_s" value="{{ test.ramp_up_s }}" min="0"
+             max="{{ load_limits.seconds }}">
+    </label>
+    <label>Stop after
+      <span class="joined">
+        <input type="number" name="limit" value="{{ test.limit }}" min="1"
+               max="{{ load_limits.iterations }}" required aria-label="Stop after how many">
+        <select name="stop_after" aria-label="Unit">
+          <option value="seconds" {% if test.stop_after == 'seconds' %}selected{% endif %}>seconds</option>
+          <option value="iterations" {% if test.stop_after == 'iterations' %}selected{% endif %}>iterations</option>
+        </select>
+      </span>
+    </label>
+  </div>
+
+  <p class="muted small">
+    Every user repeats the target back to back until the test stops. One
+    iteration is one send of a saved request, or one full pass through a
+    scenario, checks and captures included. Users start evenly spread over the
+    ramp-up. Requests go out through httpx against the active environment, each
+    user keeping its connection open as a real client would. Only put load on
+    servers you run or have permission to test.
+  </p>
+</form>
+
+<div class="save-row">
+  {% if current %}
+  <button type="button" class="primary" data-action="put" data-url="/performance/{{ current.id }}"
+          data-form="#load-form" data-target="#builder">Update</button>
+  {% endif %}
+  <button type="button" data-action="post" data-url="/performance"
+          data-form="#load-form" data-target="#builder">Save as new</button>
+  <button type="button" data-action="get" data-url="/requests/new"
+          data-target="#builder">Back to the request builder</button>
+</div>

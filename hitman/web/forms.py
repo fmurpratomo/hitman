@@ -1,8 +1,16 @@
-"""Translate the browser form payload into a :class:`Request` or :class:`Scenario`."""
+"""Translate the browser form payload into a Request, Scenario or LoadTest."""
 
 from __future__ import annotations
 
 from hitman.core.assertions import KINDS, OPS, Assertion
+from hitman.core.loadtest import (
+    MAX_ITERATIONS,
+    MAX_SECONDS,
+    MAX_USERS,
+    STOP_AFTER,
+    TARGET_KINDS,
+    LoadTest,
+)
 from hitman.core.models import BODY_TYPES, DEFAULT_TIMEOUT, KeyValue, Request
 from hitman.core.scenarios import CAPTURE_SOURCES, ON_FAILURE, Capture, Scenario, Step
 
@@ -152,4 +160,40 @@ def scenario_from_form(form) -> Scenario:
         folder=str(form.get("scenario_folder") or "").strip(),
         steps=steps,
         on_failure=on_failure if on_failure in ON_FAILURE else "stop",
+    )
+
+
+# --- performance tests --------------------------------------------------
+
+
+def _bounded(raw, default: int, low: int, high: int) -> int:
+    try:
+        value = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(value, high))
+
+
+def load_test_from_form(form) -> LoadTest:
+    # One picker covers both kinds of target, so its value carries the kind:
+    # "request:3" or "scenario:5".
+    kind, _, raw_id = str(form.get("target") or "").partition(":")
+    stop_after = str(form.get("stop_after") or "seconds")
+    if stop_after not in STOP_AFTER:
+        stop_after = "seconds"
+    return LoadTest(
+        name=str(form.get("load_name") or "").strip() or "Untitled performance test",
+        description=str(form.get("load_description") or "").strip(),
+        folder=str(form.get("load_folder") or "").strip(),
+        target_kind=kind if kind in TARGET_KINDS else "request",
+        target_id=int(raw_id) if raw_id.isdigit() else None,
+        users=_bounded(form.get("users"), 10, 1, MAX_USERS),
+        ramp_up_s=_bounded(form.get("ramp_up_s"), 0, 0, MAX_SECONDS),
+        stop_after=stop_after,
+        limit=_bounded(
+            form.get("limit"),
+            30,
+            1,
+            MAX_SECONDS if stop_after == "seconds" else MAX_ITERATIONS,
+        ),
     )

@@ -64,6 +64,19 @@ tweak.
   not a scripting language**: a stored test that can execute arbitrary
   JavaScript is a different security model from the one in section 11.
 
+- Performance tests — `core/loadtest.py`, `HttpxSession` in the httpx engine,
+  plus the `load_tests` and `load_runs` tables. A target is a saved request or a
+  scenario, and a scenario target reuses `run_scenario` unchanged as the unit
+  each virtual user repeats. Users are threads, each with its own
+  connection-keeping `HttpxSession`; the curl engine is not offered, because
+  spawning a process per request would measure process creation. Results are
+  summarised as they arrive (log-bucketed latency, 1% accuracy) rather than
+  kept, so memory does not grow with the length of a test. A run outlives the
+  request that starts it: the report fragment carries `data-poll`, `app.js`
+  re-fetches it every second, and the final frame drops the attribute, which
+  ends the loop. One run at a time, so the live registry in `app.state` is a
+  dict touched only on the event loop.
+
 ### In scope (v1)
 
 - Request builder: method, URL, query parameters, headers, body.

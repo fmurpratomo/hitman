@@ -2,6 +2,7 @@
   <button type="button" data-tab="history" class="active">History</button>
   <button type="button" data-tab="saved">Saved</button>
   <button type="button" data-tab="scenarios">Tests</button>
+  <button type="button" data-tab="performance">Performance</button>
 </nav>
 
 <div data-panel="history" class="panel list">
@@ -114,5 +115,77 @@
   {% endfor %}
   <button type="button" class="danger" data-action="delete" data-url="/scenarios/runs"
           data-target="#sidebar" data-confirm="Clear all run results?">Clear runs</button>
+  {% endif %}
+</div>
+
+{% macro load_row(item) %}
+<div class="entry-row">
+  <button type="button" class="icon run" data-action="post"
+          data-url="/performance/{{ item.id }}/run" data-target="#response"
+          title="Run {{ item.name }}" aria-label="Run {{ item.name }}">&#9658;</button>
+  <button type="button" class="entry" data-action="get" data-url="/performance/{{ item.id }}"
+          data-target="#builder">
+    <span class="name">{{ item.name }}</span>
+    <span class="muted">{{ item.test.users }}&times;{{ item.test.limit }}{{ 's' if item.test.stop_after == 'seconds' else '' }}</span>
+  </button>
+  <button type="button" class="icon" data-action="post"
+          data-url="/performance/{{ item.id }}/duplicate" data-target="#sidebar"
+          title="Duplicate {{ item.name }}"
+          aria-label="Duplicate {{ item.name }}">&#10697;</button>
+  <button type="button" class="icon delete" data-action="delete"
+          data-url="/performance/{{ item.id }}" data-target="#sidebar"
+          data-confirm="Delete the performance test {{ item.name }}?"
+          title="Delete {{ item.name }}" aria-label="Delete {{ item.name }}">&times;</button>
+</div>
+{% endmacro %}
+
+<div data-panel="performance" class="panel list" hidden>
+  <button type="button" class="wide" data-action="get" data-url="/performance/new"
+          data-target="#builder">+ New performance test</button>
+
+  {% for folder, items in load_groups %}
+    {% if folder %}
+    <details class="folder" open>
+      <summary>{{ folder }} <span class="muted">{{ items | length }}</span></summary>
+      {% for item in items %}{{ load_row(item) }}{% endfor %}
+    </details>
+    {% else %}
+      {% for item in items %}{{ load_row(item) }}{% endfor %}
+    {% endif %}
+  {% else %}
+  <p class="empty">No performance tests yet. A performance test sends a saved
+    request or a scenario from many users at once and measures latency and
+    throughput.</p>
+  {% endfor %}
+
+  {% if live_load or load_runs %}
+  <h3 class="side-heading">Recent runs</h3>
+  {% endif %}
+  {% if live_load %}
+  {% set token, live = live_load %}
+  <button type="button" class="entry" data-action="get"
+          data-url="/performance/live/{{ token }}" data-target="#response">
+    <span class="badge s3">{{ live.state | upper }}</span>
+    <span class="name">{{ live.name }}</span>
+    <span class="ms">{{ (live.progress * 100) | round | int }}%</span>
+  </button>
+  {% endif %}
+  {% for run in load_runs %}
+  {% set result = run.result %}
+  <button type="button" class="entry" data-action="get"
+          data-url="/performance/runs/{{ run.id }}" data-target="#response"
+          title="{{ result.requests }} requests · p95 {{ result.latency.p95 | round | int }}ms">
+    {% if result.failed %}
+    <span class="badge err">{{ result.failed_pct | round(1) }}% fail</span>
+    {% else %}
+    <span class="badge s2">OK</span>
+    {% endif %}
+    <span class="name">{{ result.name }}</span>
+    <span class="ms">{{ result.rps | round | int }}/s</span>
+  </button>
+  {% endfor %}
+  {% if load_runs %}
+  <button type="button" class="danger" data-action="delete" data-url="/performance/runs"
+          data-target="#sidebar" data-confirm="Clear all performance runs?">Clear runs</button>
   {% endif %}
 </div>

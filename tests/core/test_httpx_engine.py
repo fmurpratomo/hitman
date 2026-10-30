@@ -1,6 +1,6 @@
 import json
 
-from hitman.core.engines.httpx_engine import HttpxEngine
+from hitman.core.engines.httpx_engine import HttpxEngine, HttpxSession
 from hitman.core.models import KeyValue, Request
 
 
@@ -95,3 +95,47 @@ def test_scheme_less_url_works(fixture_server):
     host_and_port = fixture_server.removeprefix("http://")
     response = send(f"{host_and_port}/json")
     assert response.status == 200
+
+
+# --- the pooled session a performance test uses -------------------------
+
+
+def test_a_session_answers_like_the_engine(fixture_server):
+    session = HttpxSession()
+    try:
+        pooled = session.send(Request(url=f"{fixture_server}/json"))
+    finally:
+        session.close()
+    single = send(f"{fixture_server}/json")
+    assert (pooled.status, pooled.body, pooled.engine) == (single.status, single.body, "httpx")
+
+
+def test_a_session_reports_failures_as_responses(closed_port):
+    session = HttpxSession()
+    try:
+        response = session.send(Request(url=f"http://127.0.0.1:{closed_port}/", timeout=2))
+    finally:
+        session.close()
+    assert response.status is None
+    assert "Connection refused" in response.error
+
+
+def test_a_session_does_not_carry_cookies_between_sends(fixture_server):
+    """A fresh client has no cookies, so a pooled one must not grow any."""
+    session = HttpxSession()
+    try:
+        session.send(Request(url=f"{fixture_server}/set-cookie"))
+        echoed = json.loads(session.send(Request(url=f"{fixture_server}/echo")).body)
+    finally:
+        session.close()
+    assert "cookie" not in echoed["headers"]
+
+
+def test_a_session_honours_each_requests_redirect_setting(fixture_server):
+    session = HttpxSession()
+    try:
+        followed = session.send(Request(url=f"{fixture_server}/redirect"))
+        held = session.send(Request(url=f"{fixture_server}/redirect", follow_redirects=False))
+    finally:
+        session.close()
+    assert (followed.status, held.status) == (200, 302)

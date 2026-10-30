@@ -10,8 +10,19 @@ body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
   padding: 10px 16px; border-bottom: 1px solid var(--line); }
 .topbar h1 { font-size: 16px; margin: 0; letter-spacing: .04em; }
 .toolbar { display: flex; gap: 8px; }
-.layout { display: grid; grid-template-columns: 280px 1fr; height: calc(100vh - 49px); }
-#sidebar { border-right: 1px solid var(--line); overflow-y: auto; padding: 8px; }
+.layout { display: grid; grid-template-columns: var(--sidebar-width, 280px) auto 1fr;
+  height: calc(100vh - 49px); }
+#sidebar { overflow-y: auto; padding: 8px; }
+/* The sidebar's right border doubles as its resize handle. It stays a 1px
+   line; the ::after widens only the area that catches the pointer. */
+.resizer { width: 1px; background: var(--line); position: relative; cursor: col-resize;
+  touch-action: none; }
+.resizer::after { content: ""; position: absolute; inset: 0 -4px; z-index: 1; }
+.resizer:hover, .resizer:focus-visible, body.resizing .resizer { background: var(--accent); }
+.resizer:focus-visible { outline: none; }
+/* Mid-drag the pointer crosses text it must not select, and links and
+   buttons it must not restyle the cursor for. */
+body.resizing { cursor: col-resize; user-select: none; }
 .centre { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
 #builder { padding: 12px; border-bottom: 1px solid var(--line); overflow-y: auto; max-height: 55vh; }
 #response { padding: 12px; overflow-y: auto; }
@@ -173,3 +184,77 @@ button[aria-busy="true"]::after {
 .scenario-meta input[name="scenario_folder"] { max-width: 180px; }
 /* History entries sit under a day heading, indented like folder contents. */
 .folder > .entry { padding-left: 18px; }
+
+/* --- performance tests --- */
+/* Four tabs in a narrow sidebar: scroll rather than overflow if it is dragged
+   narrower than they fit. */
+#sidebar .tabs { overflow-x: auto; scrollbar-width: none; }
+#sidebar .tabs button { flex: none; padding: 7px 6px; }
+/* Without this an entry's text sets its minimum width, and a long name
+   pushes the row's own buttons out of the sidebar. */
+.entry-row .entry { min-width: 0; }
+#load-form input[name="load_name"] { flex: 1; }
+#load-form input[name="load_description"] { flex: 1; }
+#load-form input[name="load_folder"] { max-width: 180px; }
+.load-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px;
+  margin: 4px 0 8px; }
+.load-fields label { display: flex; flex-direction: column; gap: 4px; color: var(--muted);
+  font-size: 12px; }
+.load-fields .target { grid-column: 1 / -1; }
+.load-fields input, .load-fields select { width: 100%; font-size: 14px; }
+.load-fields .joined { display: flex; gap: 6px; }
+.load-fields .joined input { min-width: 0; }
+.load-fields .joined select { width: auto; }
+.load-stop { margin-left: auto; padding: 4px 12px; }
+.load-progress { display: flex; align-items: center; gap: 10px; margin: -2px 0 12px; }
+.load-progress progress { flex: 1; max-width: 320px; height: 6px; accent-color: var(--accent); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px;
+  margin-bottom: 4px; }
+.tile { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.tile-label, .tile-note { color: var(--muted); font-size: 12px; }
+.tile-value { font-size: 22px; font-weight: 600; }
+.tile-value small { color: var(--muted); font-size: 12px; font-weight: 400; }
+.tile-value.bad { color: var(--err); }
+.report-heading { font-size: 13px; font-weight: 600; margin: 18px 0 8px; }
+.report-heading .muted { font-weight: 400; margin-left: 4px; }
+/* Columns of numbers, so tabular figures: digits line up down a column. */
+.stats { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.stats th { color: var(--muted); font-size: 12px; font-weight: 500; text-align: right;
+  padding: 3px 0 3px 22px; }
+.stats td { text-align: right; padding: 4px 0 4px 22px; border-top: 1px solid var(--line); }
+.stats th:first-child, .stats td:first-child { padding-left: 0; }
+.stats.by-label th:first-child, .stats.by-label td:first-child { text-align: left; }
+.stats.errors td:last-child { text-align: left; padding-left: 14px; word-break: break-word; }
+.codes { display: flex; flex-wrap: wrap; gap: 6px 16px; font-variant-numeric: tabular-nums; }
+.legend { display: flex; gap: 16px; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.legend .key { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+  margin-right: 6px; vertical-align: -1px; }
+.key.ok, .seg.ok { background: var(--accent); }
+.key.bad, .seg.bad { background: var(--err); }
+/* The throughput chart. Each slice of time gets an equal slot, so the x axis
+   reads as time; the bar inside it is capped at 24px and never fills it.
+   Gridlines are hairlines at the top and the middle, drawn as backgrounds. */
+.chart { display: grid; grid-template-columns: auto 1fr; grid-template-rows: 140px auto;
+  column-gap: 8px; max-width: 920px; }
+.chart-y { display: flex; flex-direction: column; justify-content: space-between;
+  align-items: flex-end; margin: -7px 0; color: var(--muted); font-size: 11px;
+  font-variant-numeric: tabular-nums; }
+.chart-plot { display: flex; align-items: flex-end; border-bottom: 1px solid var(--line);
+  background:
+    linear-gradient(var(--line), var(--line)) 0 0 / 100% 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) 0 50% / 100% 1px no-repeat; }
+.chart-x { grid-column: 2; display: flex; justify-content: space-between; padding-top: 4px;
+  color: var(--muted); font-size: 11px; }
+.bar { position: relative; flex: 1; min-width: 0; height: 100%; padding: 0 1px;
+  display: flex; flex-direction: column-reverse; align-items: center; gap: 2px; }
+.bar .seg { display: block; width: 100%; max-width: 24px; }
+.bar .seg:last-child { border-radius: 4px 4px 0 0; }
+/* The whole slot is the hover target, not just the bar: a thin or empty bar
+   still answers. */
+.bar:hover { background: rgba(255,255,255,.05); }
+.bar:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 6px);
+  left: 0; z-index: 2; white-space: nowrap; pointer-events: none; padding: 4px 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); font-size: 12px; }
+.bar.late:hover::after { left: auto; right: 0; }
