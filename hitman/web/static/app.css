@@ -10,8 +10,19 @@ body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
   padding: 10px 16px; border-bottom: 1px solid var(--line); }
 .topbar h1 { font-size: 16px; margin: 0; letter-spacing: .04em; }
 .toolbar { display: flex; gap: 8px; }
-.layout { display: grid; grid-template-columns: 280px 1fr; height: calc(100vh - 49px); }
-#sidebar { border-right: 1px solid var(--line); overflow-y: auto; padding: 8px; }
+.layout { display: grid; grid-template-columns: var(--sidebar-width, 280px) auto 1fr;
+  height: calc(100vh - 49px); }
+#sidebar { overflow-y: auto; padding: 8px; }
+/* The sidebar's right border doubles as its resize handle. It stays a 1px
+   line; the ::after widens only the area that catches the pointer. */
+.resizer { width: 1px; background: var(--line); position: relative; cursor: col-resize;
+  touch-action: none; }
+.resizer::after { content: ""; position: absolute; inset: 0 -4px; z-index: 1; }
+.resizer:hover, .resizer:focus-visible, body.resizing .resizer { background: var(--accent); }
+.resizer:focus-visible { outline: none; }
+/* Mid-drag the pointer crosses text it must not select, and links and
+   buttons it must not restyle the cursor for. */
+body.resizing { cursor: col-resize; user-select: none; }
 .centre { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
 #builder { padding: 12px; border-bottom: 1px solid var(--line); overflow-y: auto; max-height: 55vh; }
 #response { padding: 12px; overflow-y: auto; }

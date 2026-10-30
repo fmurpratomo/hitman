@@ -339,6 +339,77 @@ async function flushDraft() {
   }
 }
 
+// The sidebar is as wide as you drag it: pull the divider, or focus it and use
+// the arrow keys; double-click puts it back. The width is remembered in
+// localStorage, which is a convenience only — if it is unavailable the
+// sidebar simply starts at its default.
+const SIDEBAR_MIN = 180;
+const SIDEBAR_KEY_STEP = 16;
+const SIDEBAR_STORAGE_KEY = 'hitman.sidebarWidth';
+
+function setSidebarWidth(px) {
+  const layout = document.querySelector('.layout');
+  // Leave the request builder enough room to stay usable.
+  const max = Math.max(SIDEBAR_MIN, window.innerWidth - 400);
+  const width = Math.round(Math.min(Math.max(px, SIDEBAR_MIN), max));
+  layout.style.setProperty('--sidebar-width', width + 'px');
+  return width;
+}
+
+function rememberSidebarWidth() {
+  try {
+    localStorage.setItem(SIDEBAR_STORAGE_KEY, document.getElementById('sidebar').offsetWidth);
+  } catch (error) {
+    // Private window or blocked storage: the width just won't persist.
+  }
+}
+
+const resizer = document.getElementById('sidebar-resizer');
+if (resizer) {
+  try {
+    const saved = Number(localStorage.getItem(SIDEBAR_STORAGE_KEY));
+    if (saved) setSidebarWidth(saved);
+  } catch (error) {
+    // Nothing remembered; keep the default.
+  }
+
+  // Pointer capture keeps the drag ours even when the pointer outruns the
+  // 1px handle, and lostpointercapture covers release and cancel alike.
+  resizer.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    resizer.setPointerCapture(event.pointerId);
+    document.body.classList.add('resizing');
+  });
+
+  resizer.addEventListener('pointermove', (event) => {
+    if (!resizer.hasPointerCapture(event.pointerId)) return;
+    const left = document.getElementById('sidebar').getBoundingClientRect().left;
+    setSidebarWidth(event.clientX - left);
+  });
+
+  resizer.addEventListener('lostpointercapture', () => {
+    document.body.classList.remove('resizing');
+    rememberSidebarWidth();
+  });
+
+  resizer.addEventListener('keydown', (event) => {
+    const step = { ArrowLeft: -SIDEBAR_KEY_STEP, ArrowRight: SIDEBAR_KEY_STEP }[event.key];
+    if (!step) return;
+    event.preventDefault();
+    setSidebarWidth(document.getElementById('sidebar').offsetWidth + step);
+    rememberSidebarWidth();
+  });
+
+  resizer.addEventListener('dblclick', () => {
+    document.querySelector('.layout').style.removeProperty('--sidebar-width');
+    try {
+      localStorage.removeItem(SIDEBAR_STORAGE_KEY);
+    } catch (error) {
+      // Nothing to forget.
+    }
+  });
+}
+
 let toastTimer;
 function toast(message) {
   const element = document.getElementById('toast');

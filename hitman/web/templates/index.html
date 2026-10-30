@@ -11,6 +11,8 @@
 
 <main class="layout">
   <aside id="sidebar">{% include "fragments/sidebar.html" %}</aside>
+  <div id="sidebar-resizer" class="resizer" role="separator" aria-orientation="vertical"
+       aria-label="Resize sidebar" tabindex="0"></div>
   <section class="centre">
     <div id="builder">{% include "fragments/builder.html" %}</div>
     <div id="response">
