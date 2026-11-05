@@ -136,6 +136,16 @@ class Response:
     error: str | None = None
     curl_exit_code: int | None = None
 
+    @property
+    def ok(self) -> bool:
+        """Whether this is the response you were hoping for.
+
+        2xx and nothing else. A send that never completed has no status to
+        judge, and a 3xx is a redirect that was deliberately not followed —
+        neither is a result worth keeping as "the last good one".
+        """
+        return self.error is None and self.status is not None and 200 <= self.status < 300
+
     def to_dict(self) -> dict:
         return asdict(self)
 

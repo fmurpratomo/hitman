@@ -19,6 +19,7 @@ from hitman.core.scenarios import Scenario, ScenarioResult
 from hitman.core.variables import substitute
 
 ACTIVE_ENVIRONMENT = "active_environment"
+BACKFILLED_SUCCESS = "last_success_backfilled"
 
 HISTORY_LIMIT = 500
 STORED_BODY_LIMIT = 256 * 1024
@@ -129,7 +130,57 @@ CREATE TABLE IF NOT EXISTS history (
   response_body         TEXT,
   created_at            TEXT NOT NULL
 );
+
+-- The last 2xx response each saved request produced, kept as its own row
+-- rather than as a pointer into history. History is trimmed to the most
+-- recent HISTORY_LIMIT sends and can be cleared outright, and the whole point
+-- of this table is to be able to read the body you got without sending the
+-- request again — a copy that an unrelated burst of traffic can evict would
+-- not do that. One row per saved request, replaced on each success, so the
+-- cost is bounded by how many requests you have saved rather than by how
+-- often you send them.
+CREATE TABLE IF NOT EXISTS last_success (
+  saved_request_id      INTEGER PRIMARY KEY,
+  request_json          TEXT NOT NULL,
+  engine                TEXT NOT NULL,
+  status                INTEGER,
+  reason                TEXT,
+  elapsed_ms            REAL,
+  size_bytes            INTEGER,
+  content_type          TEXT,
+  body_truncated        INTEGER NOT NULL DEFAULT 0,
+  response_headers_json TEXT,
+  response_body         TEXT,
+  created_at            TEXT NOT NULL
+);
 """
+
+
+@dataclass
+class SuccessSummary:
+    """What a list can say about a saved request's last good send.
+
+    The summary and the response are read separately on purpose: the sidebar is
+    re-rendered on every action, and joining in a body of up to
+    ``STORED_BODY_LIMIT`` per saved request to show a status badge would make
+    every click pay for bodies nobody asked to see.
+    """
+
+    status: int | None
+    reason: str
+    elapsed_ms: float
+    size_bytes: int
+    created_at: str
+
+
+@dataclass
+class LastSuccess:
+    """A saved request's last 2xx send, request and response both."""
+
+    saved_request_id: int
+    request: Request
+    response: Response
+    created_at: str
 
 
 @dataclass
@@ -141,6 +192,9 @@ class SavedRequest:
     draft: Request | None
     created_at: str
     updated_at: str
+    # None until the request has been sent successfully at least once. Carries
+    # no response body; ``Store.last_success`` fetches that on demand.
+    last_success: SuccessSummary | None = None
 
     @property
     def dirty(self) -> bool:
@@ -262,7 +316,7 @@ class Store:
             self._conn.commit()
 
     def _migrate(self) -> None:
-        """Bring an existing database up to the current schema.
+        """Bring an existing database up to the current schema and content.
 
         CREATE TABLE IF NOT EXISTS is a no-op on a table that already exists,
         so a column added after someone started using the app has to be
@@ -292,6 +346,49 @@ class Store:
             self._conn.execute(
                 "ALTER TABLE scenarios ADD COLUMN folder TEXT NOT NULL DEFAULT ''"
             )
+
+        self._backfill_successes()
+
+    def _backfill_successes(self) -> None:
+        """Seed last_success from history, once, for a database that predates it.
+
+        History already holds successful responses; without this, every saved
+        request would have to be sent once more before it had anything to show,
+        which is the exact chore the table exists to remove. Only the newest
+        2xx per saved request is taken, and only where the send recorded which
+        request it came from — the content match history uses for naming
+        depends on the active environment, and a guess is not worth keeping.
+
+        Guarded by a settings flag rather than by the table being empty, so
+        responses deleted on purpose do not come back at the next startup.
+        """
+        done = self._conn.execute(
+            "SELECT 1 FROM settings WHERE key = ?", (BACKFILLED_SUCCESS,)
+        ).fetchone()
+        if done:
+            return
+        self._conn.execute(
+            "INSERT OR IGNORE INTO last_success (saved_request_id, request_json,"
+            " engine, status, reason, elapsed_ms, size_bytes, content_type,"
+            " body_truncated, response_headers_json, response_body, created_at)"
+            " SELECT h.saved_request_id, h.request_json, h.engine, h.status,"
+            " h.reason, h.elapsed_ms, h.size_bytes, h.content_type,"
+            " h.body_truncated, h.response_headers_json, h.response_body,"
+            " h.created_at"
+            " FROM history h"
+            # The join drops entries whose saved request has since been deleted.
+            " JOIN saved_requests s ON s.id = h.saved_request_id"
+            " WHERE h.status BETWEEN 200 AND 299 AND h.error IS NULL"
+            # Highest id wins: one row per saved request, the most recent one.
+            " AND h.id = (SELECT MAX(h2.id) FROM history h2"
+            "   WHERE h2.saved_request_id = h.saved_request_id"
+            "   AND h2.status BETWEEN 200 AND 299 AND h2.error IS NULL)"
+        )
+        self._conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, '1')"
+            " ON CONFLICT(key) DO NOTHING",
+            (BACKFILLED_SUCCESS,),
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -397,7 +494,7 @@ class Store:
     def get_request(self, request_id: int) -> SavedRequest | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM saved_requests WHERE id = ?", (request_id,)
+                _SAVED_SELECT + " WHERE r.id = ?", (request_id,)
             ).fetchone()
         return _row_to_saved(row) if row else None
 
@@ -405,14 +502,39 @@ class Store:
         with self._lock:
             rows = self._conn.execute(
                 # Folders first, then unfiled; alphabetical within each.
-                "SELECT * FROM saved_requests"
-                " ORDER BY (folder = '') ASC, folder ASC, name ASC"
+                _SAVED_SELECT + " ORDER BY (r.folder = '') ASC, r.folder ASC, r.name ASC"
             ).fetchall()
         return [_row_to_saved(row) for row in rows]
+
+    def last_success(self, request_id: int) -> LastSuccess | None:
+        """The last 2xx send of a saved request, body included.
+
+        Read on demand rather than with the list: this is the one call that
+        carries a response body.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM last_success WHERE saved_request_id = ?", (request_id,)
+            ).fetchone()
+        return _row_to_last_success(row) if row else None
+
+    def forget_success(self, request_id: int) -> None:
+        """Drop the kept response, leaving the saved request itself alone."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM last_success WHERE saved_request_id = ?", (request_id,)
+            )
+            self._conn.commit()
 
     def delete_request(self, request_id: int) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM saved_requests WHERE id = ?", (request_id,))
+            # No foreign key to cascade through, and ids are reused by
+            # AUTOINCREMENT only after the table is emptied — but a stale row
+            # here would attach an old response to a future request, so it goes.
+            self._conn.execute(
+                "DELETE FROM last_success WHERE saved_request_id = ?", (request_id,)
+            )
             self._conn.commit()
 
     # --- environments ---------------------------------------------------
@@ -748,6 +870,14 @@ class Store:
     def add_history(
         self, request: Request, response: Response, saved_request_id: int | None = None
     ) -> int:
+        """Record a send, and keep it as the saved request's last good response.
+
+        The second part only happens for a 2xx sent from a saved request, and
+        is what makes a successful body readable later without sending again.
+        It rides along here rather than being a second call from the route so
+        that there is exactly one write path for "a send happened", and so the
+        two rows land in one transaction.
+        """
         with self._lock:
             cursor = self._conn.execute(
                 "INSERT INTO history (saved_request_id, request_json, engine, status,"
@@ -772,6 +902,8 @@ class Store:
                 ),
             )
             entry_id = int(cursor.lastrowid)
+            if saved_request_id is not None and response.ok:
+                self._keep_success(saved_request_id, request, response)
             # Keep the database from growing without bound.
             self._conn.execute(
                 "DELETE FROM history WHERE id NOT IN"
@@ -780,6 +912,48 @@ class Store:
             )
             self._conn.commit()
             return entry_id
+
+    def _keep_success(
+        self, saved_request_id: int, request: Request, response: Response
+    ) -> None:
+        """Replace the saved request's kept response. The lock must be held.
+
+        An upsert, not an append: only the latest success is of interest, and
+        a row per success would reintroduce the unbounded growth that history
+        is trimmed to avoid.
+        """
+        body = response.body[:STORED_BODY_LIMIT]
+        self._conn.execute(
+            "INSERT INTO last_success (saved_request_id, request_json, engine,"
+            " status, reason, elapsed_ms, size_bytes, content_type,"
+            " body_truncated, response_headers_json, response_body, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(saved_request_id) DO UPDATE SET"
+            " request_json = excluded.request_json, engine = excluded.engine,"
+            " status = excluded.status, reason = excluded.reason,"
+            " elapsed_ms = excluded.elapsed_ms, size_bytes = excluded.size_bytes,"
+            " content_type = excluded.content_type,"
+            " body_truncated = excluded.body_truncated,"
+            " response_headers_json = excluded.response_headers_json,"
+            " response_body = excluded.response_body,"
+            " created_at = excluded.created_at",
+            (
+                saved_request_id,
+                json.dumps(normalize(request).to_dict()),
+                response.engine,
+                response.status,
+                response.reason,
+                response.elapsed_ms,
+                response.size_bytes,
+                response.content_type,
+                # Truncated for display if the engine said so, or if storing it
+                # just now cost it its tail.
+                int(response.body_truncated or len(response.body) > len(body)),
+                json.dumps([list(pair) for pair in response.headers]),
+                body,
+                _now(),
+            ),
+        )
 
     def list_history(self, limit: int = 100) -> list[HistoryEntry]:
         with self._lock:
@@ -835,6 +1009,12 @@ class Store:
         return table
 
     def clear_history(self) -> None:
+        """Empty the history list.
+
+        Deliberately leaves ``last_success`` alone: clearing a long list of
+        sends is housekeeping, and it should not cost you the one response per
+        saved request that you kept in order to read it later.
+        """
         with self._lock:
             self._conn.execute("DELETE FROM history")
             self._conn.commit()
@@ -907,8 +1087,32 @@ def _row_to_env(row: sqlite3.Row) -> Environment:
     )
 
 
+# LEFT JOIN, so a request that has never succeeded still comes back - just
+# without a summary. The last_success columns are aliased because the two
+# tables both have status-of-the-row timestamps named created_at.
+_SAVED_SELECT = (
+    "SELECT r.*, k.status AS ok_status, k.reason AS ok_reason,"
+    " k.elapsed_ms AS ok_elapsed_ms, k.size_bytes AS ok_size_bytes,"
+    " k.created_at AS ok_created_at"
+    " FROM saved_requests r"
+    " LEFT JOIN last_success k ON k.saved_request_id = r.id"
+)
+
+
 def _row_to_saved(row: sqlite3.Row) -> SavedRequest:
     draft = row["draft_json"]
+    keys = row.keys()
+    # The summary is absent, not empty, for a request that has never returned
+    # 2xx - and absent too for a caller that selected the table on its own.
+    summary = None
+    if "ok_created_at" in keys and row["ok_created_at"]:
+        summary = SuccessSummary(
+            status=row["ok_status"],
+            reason=row["ok_reason"] or "",
+            elapsed_ms=row["ok_elapsed_ms"] or 0.0,
+            size_bytes=row["ok_size_bytes"] or 0,
+            created_at=row["ok_created_at"],
+        )
     return SavedRequest(
         id=row["id"],
         name=row["name"],
@@ -917,6 +1121,27 @@ def _row_to_saved(row: sqlite3.Row) -> SavedRequest:
         draft=Request.from_dict(json.loads(draft)) if draft else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        last_success=summary,
+    )
+
+
+def _row_to_last_success(row: sqlite3.Row) -> LastSuccess:
+    return LastSuccess(
+        saved_request_id=row["saved_request_id"],
+        request=Request.from_dict(json.loads(row["request_json"])),
+        response=Response(
+            engine=row["engine"],
+            status=row["status"],
+            reason=row["reason"] or "",
+            # JSON has no tuples; restore them so Response compares equal.
+            headers=[tuple(pair) for pair in json.loads(row["response_headers_json"] or "[]")],
+            body=row["response_body"] or "",
+            body_truncated=bool(row["body_truncated"]),
+            size_bytes=row["size_bytes"] or 0,
+            elapsed_ms=row["elapsed_ms"] or 0.0,
+            content_type=row["content_type"] or "",
+        ),
+        created_at=row["created_at"],
     )
 
 

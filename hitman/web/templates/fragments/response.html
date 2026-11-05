@@ -1,5 +1,17 @@
 {% from "fragments/_macros.html" import body_pre %}
 {% set notes = notes if notes is defined else [] %}
+{# When set, this body was read back from storage rather than just received.
+   Saying so in the status line is the whole safeguard against mistaking a
+   response kept from this morning for one the server just sent. #}
+{% set stored_at = stored_at if stored_at is defined else None %}
+{% set stored_request = stored_request if stored_request is defined else None %}
+{% if stored_at %}
+<p class="stored-note">
+  Last successful response, kept {{ relative(stored_at) }}.
+  {% if stored_request %}<span class="muted">{{ stored_request.method }} {{ stored_request.url }}</span>{% endif %}
+  Press <b>Send</b> for a fresh one.
+</p>
+{% endif %}
 {% for note in notes %}
 <p class="warnings">{{ note }}</p>
 {% endfor %}
@@ -17,6 +29,7 @@
   <span class="ms">{{ response.elapsed_ms | round | int }}ms</span>
   <span class="size">{{ response.size_bytes }} B</span>
   <span class="engine">via {{ response.engine }}</span>
+  {% if stored_at %}<span class="stored-chip" title="Sent {{ stored_at }}">kept {{ relative(stored_at) }}</span>{% endif %}
   {% if response.body_truncated %}<span class="warn">body truncated for display</span>{% endif %}
 </div>
 

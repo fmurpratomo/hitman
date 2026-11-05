@@ -397,3 +397,149 @@ def test_a_send_lands_under_today(client, base_form, fixture_server):
     reply = client.post("/send", data={**base_form, "url": f"{fixture_server}/json"})
     assert "<summary>Today" in reply.text
 
+
+
+# --- the response kept per saved request --------------------------------
+
+
+def succeed(app, saved_id, body='{"ok": true}', status=200):
+    """A successful send of a saved request, as /send records one."""
+    app.state.store.add_history(
+        Request(url="http://localhost:3000/users"),
+        Response(
+            engine="httpx", status=status, reason="OK", body=body,
+            size_bytes=len(body), elapsed_ms=12.5,
+            headers=[("Content-Type", "application/json")],
+        ),
+        saved_id,
+    )
+
+
+def test_the_saved_list_shows_the_status_it_last_returned(client, app):
+    saved_id = make_saved(app)
+    succeed(app, saved_id)
+    reply = client.get("/requests")
+    assert f'data-url="/requests/{saved_id}/last-success"' in reply.text
+    assert "Last success: 200 OK" in reply.text
+
+
+def test_a_request_that_never_succeeded_shows_no_status(client, app):
+    saved_id = make_saved(app)
+    assert f'data-url="/requests/{saved_id}/last-success"' not in client.get("/requests").text
+
+
+def test_loading_a_saved_request_brings_back_its_successful_body(client, app):
+    """The whole point: the body is readable again without sending."""
+    saved_id = make_saved(app)
+    succeed(app, saved_id, body='{"users": ["ada"]}')
+
+    reply = client.get(f"/requests/{saved_id}")
+    assert reply.status_code == 200
+    assert 'data-oob="#response"' in reply.text
+    assert "ada" in reply.text
+    assert "Last successful response, kept" in reply.text
+
+
+def test_loading_one_that_never_succeeded_says_so_in_the_response_pane(client, app):
+    """The pane follows the builder, so it cannot be left showing another body."""
+    saved_id = make_saved(app)
+    reply = client.get(f"/requests/{saved_id}")
+    assert reply.status_code == 200
+    assert 'data-oob="#response"' in reply.text
+    assert "No successful response kept for this request yet." in reply.text
+
+
+def test_updating_a_request_leaves_the_response_on_screen(client, app, base_form):
+    """Only opening a request re-points the pane; saving one must not clear it."""
+    saved_id = make_saved(app)
+    succeed(app, saved_id)
+    reply = client.put(
+        f"/requests/{saved_id}",
+        data={**base_form, "url": "http://localhost:3000/users", "save_name": "Get users"},
+    )
+    assert 'data-oob="#response"' not in reply.text
+
+
+def test_rolling_back_leaves_the_response_on_screen(client, app):
+    saved_id = make_saved(app)
+    succeed(app, saved_id)
+    reply = client.post(f"/requests/{saved_id}/rollback")
+    assert 'data-oob="#response"' not in reply.text
+
+
+def test_the_kept_response_can_be_opened_on_its_own(client, app):
+    """Only the response pane, so the request being edited is not disturbed."""
+    saved_id = make_saved(app)
+    succeed(app, saved_id, body='{"users": ["ada"]}')
+
+    reply = client.get(f"/requests/{saved_id}/last-success")
+    assert reply.status_code == 200
+    assert "ada" in reply.text
+    assert "Last successful response, kept" in reply.text
+    assert 'id="request-form"' not in reply.text
+
+
+def test_a_kept_response_says_it_is_kept_rather_than_fresh(client, app):
+    saved_id = make_saved(app)
+    succeed(app, saved_id)
+    reply = client.get(f"/requests/{saved_id}/last-success")
+    assert "kept just now" in reply.text
+    assert "Press <b>Send</b> for a fresh one." in reply.text
+
+
+def test_asking_for_a_kept_response_there_is_none_of_is_a_404(client, app):
+    assert client.get(f"/requests/{make_saved(app)}/last-success").status_code == 404
+    assert client.get("/requests/9999/last-success").status_code == 404
+
+
+def test_a_send_from_the_builder_keeps_its_response(client, app, base_form, fixture_server):
+    """End to end through /send, which is what records the link."""
+    saved_id = make_saved(app)
+    client.post(
+        "/send",
+        data={**base_form, "url": f"{fixture_server}/json", "request_id": str(saved_id)},
+    )
+    kept = app.state.store.last_success(saved_id)
+    assert kept is not None
+    assert "world" in kept.response.body
+    # And the badge is in the sidebar the same reply refreshed out of band.
+    assert f'data-url="/requests/{saved_id}/last-success"' in client.get("/requests").text
+
+
+def test_a_send_that_fails_keeps_the_last_good_response(client, app, base_form, fixture_server):
+    saved_id = make_saved(app)
+    client.post(
+        "/send",
+        data={**base_form, "url": f"{fixture_server}/json", "request_id": str(saved_id)},
+    )
+    client.post(
+        "/send",
+        data={**base_form, "url": f"{fixture_server}/status/500", "request_id": str(saved_id)},
+    )
+    assert "world" in app.state.store.last_success(saved_id).response.body
+
+
+def test_an_unsaved_send_keeps_nothing(client, app, base_form, fixture_server):
+    """No saved request to attach it to, so there is nothing to keep."""
+    saved_id = make_saved(app)
+    client.post("/send", data={**base_form, "url": f"{fixture_server}/json"})
+    assert app.state.store.last_success(saved_id) is None
+
+
+def test_clearing_history_keeps_the_saved_responses(client, app):
+    saved_id = make_saved(app)
+    succeed(app, saved_id)
+    client.delete("/history")
+    assert app.state.store.last_success(saved_id) is not None
+    assert f'data-url="/requests/{saved_id}/last-success"' in client.get("/requests").text
+
+
+def test_the_badge_hint_waits_until_there_is_a_badge(client, app):
+    make_saved(app)
+    assert "kept so you can read that body again" not in client.get("/requests").text
+
+
+def test_the_badge_hint_appears_once_something_is_kept(client, app):
+    saved_id = make_saved(app)
+    succeed(app, saved_id)
+    assert "kept so you can read that body again" in client.get("/requests").text

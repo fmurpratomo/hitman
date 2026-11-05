@@ -1,0 +1,17 @@
+{# The response pane for a saved request that was just opened: the response it
+   last returned, or a plain note that there is none yet.
+
+   The "none yet" half matters as much as the other: without it the pane would
+   keep showing the previous request's body next to this request's builder,
+   and a body on screen has to belong to the request on screen. #}
+{% if last_success %}
+{% with response = last_success.response,
+        pretty = pretty_lines(last_success.response.body),
+        stored_at = last_success.created_at,
+        stored_request = last_success.request %}
+{% include "fragments/response.html" %}
+{% endwith %}
+{% else %}
+<p class="empty">No successful response kept for this request yet.
+  Press <b>Send</b> to see what it returns.</p>
+{% endif %}

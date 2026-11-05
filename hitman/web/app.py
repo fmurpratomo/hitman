@@ -14,6 +14,7 @@ from hitman.core.engines.curl_engine import curl_available
 from hitman.core.store import Store
 from hitman.web.bodyview import pretty_lines
 from hitman.web.charts import nice_ceiling
+from hitman.web.dates import relative
 
 BASE_DIR = Path(__file__).parent
 DEFAULT_DB = os.environ.get("HITMAN_DB", "data/hitman.db")
@@ -39,6 +40,9 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     # cannot precompute one list per step in the route.
     app.state.templates.env.globals["pretty_lines"] = pretty_lines
     app.state.templates.env.globals["nice_ceiling"] = nice_ceiling
+    # The saved list dates one kept response per row; a route cannot precompute
+    # a string per row without walking the list a second time.
+    app.state.templates.env.globals["relative"] = relative
     app.state.curl_available = curl_available()
     # Performance tests in flight, by token. See the performance routes.
     app.state.live_loads = {}

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
-from hitman.web.dates import day_label, group_by_day, local_day
+from hitman.web.dates import day_label, group_by_day, local_day, relative
 
 
 @dataclass
@@ -94,3 +94,42 @@ def test_a_clock_skewed_row_joins_its_own_day_rather_than_repeating_it():
     groups = group_by_day([local(0), local(1), local(0)])
     assert [label for label, _ in groups] == ["Today", "Yesterday"]
     assert len(groups[0][1]) == 2
+
+
+# --- relative ------------------------------------------------------------
+
+
+def stamp(**delta):
+    moment = datetime.now(timezone.utc) - timedelta(**delta)
+    return moment.isoformat(timespec="seconds")
+
+
+def test_the_last_minute_reads_as_just_now():
+    assert relative(stamp(seconds=5)) == "just now"
+
+
+def test_minutes_hours_and_days():
+    assert relative(stamp(minutes=7)) == "7m ago"
+    assert relative(stamp(hours=5)) == "5h ago"
+    assert relative(stamp(days=3)) == "3d ago"
+
+
+def test_past_a_week_it_gives_the_date_instead():
+    """"43d ago" is not a date anyone can place."""
+    today = datetime.now(timezone.utc).astimezone().date()
+    assert relative(stamp(days=43)) == day_label(local_day(stamp(days=43)), today)
+
+
+def test_a_clock_that_moved_backwards_is_not_the_future():
+    assert relative(stamp(seconds=-90)) == "just now"
+
+
+def test_relative_reads_a_stamp_without_an_offset_as_local():
+    local_now = datetime.now(timezone.utc).astimezone().replace(tzinfo=None)
+    naive = (local_now - timedelta(hours=3)).isoformat(timespec="seconds")
+    assert relative(naive) == "3h ago"
+
+
+def test_an_unparseable_stamp_renders_as_nothing():
+    assert relative("not a date") == ""
+    assert relative(None) == ""

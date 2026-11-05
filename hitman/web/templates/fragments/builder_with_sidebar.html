@@ -1,2 +1,8 @@
 {% include "fragments/builder.html" %}
 <div data-oob="#sidebar">{% include "fragments/sidebar.html" %}</div>
+{# Only when a saved request was opened. Updating or rolling one back leaves
+   the pane alone: the response there is already this request's, and clearing
+   it would cost you the one you just looked at. #}
+{% if show_kept is defined and show_kept %}
+<div data-oob="#response">{% include "fragments/kept_response.html" %}</div>
+{% endif %}

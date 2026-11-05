@@ -34,12 +34,23 @@
 </div>
 
 {% macro saved_row(item) %}
+{% set kept = item.last_success %}
 <div class="entry-row">
   <button type="button" class="entry" data-action="get" data-url="/requests/{{ item.id }}" data-target="#builder">
     <span class="verb">{{ item.editing.method }}</span>
     <span class="name">{{ item.name }}</span>
     {% if item.dirty %}<span class="dot" title="Unsaved changes">&bull;</span>{% endif %}
   </button>
+  {# The status of the response this request last returned, and the way to read
+     it again. Loading the request shows it too; this is for peeking at one
+     without giving up the request already in the builder. #}
+  {% if kept %}
+  <button type="button" class="kept-badge badge s{{ (kept.status or 0) // 100 }}"
+          data-action="get" data-url="/requests/{{ item.id }}/last-success"
+          data-target="#response"
+          title="Last success: {{ kept.status }} {{ kept.reason }} · {{ kept.size_bytes }} B · {{ kept.elapsed_ms | round | int }}ms · {{ relative(kept.created_at) }}. Show the kept response."
+          aria-label="Show the response {{ item.name }} last returned">{{ kept.status }}</button>
+  {% endif %}
   <button type="button" class="icon" data-action="post" data-url="/requests/{{ item.id }}/duplicate"
           data-target="#sidebar" title="Duplicate {{ item.name }}"
           aria-label="Duplicate {{ item.name }}">&#10697;</button>
@@ -62,6 +73,11 @@
   {% else %}
   <p class="empty">No saved requests.</p>
   {% endfor %}
+  {% if any_kept %}
+  <p class="hint">The status beside a request is the last successful response
+    it returned, kept so you can read that body again without sending.
+    Opening the request shows it; clicking the status shows it on its own.</p>
+  {% endif %}
 </div>
 
 {% macro scenario_row(item) %}

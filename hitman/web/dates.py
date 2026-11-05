@@ -12,7 +12,7 @@ No display strings live in ``core``; this is the view's business.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 
 def local_day(stamp: str) -> date | None:
@@ -38,6 +38,37 @@ def day_label(day: date | None, today: date) -> str:
     if day.year == today.year:
         return f"{day:%a} {day.day} {day:%b}"
     return f"{day.day} {day:%b} {day.year}"
+
+
+def relative(stamp: str, now: datetime | None = None) -> str:
+    """How long ago a stored timestamp was, for a list with no room for a date.
+
+    Coarse on purpose: the question a saved request answers with this is "is
+    the response I kept from this morning or from last month?", and a minute's
+    precision past the first hour is noise. Anything older than a week gets the
+    date instead, because "43d ago" is not a date anyone can place.
+    """
+    try:
+        moment = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return ""
+    if moment.tzinfo is None:
+        # Same reading as local_day: a stamp without an offset is local time.
+        moment = moment.astimezone()
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    seconds = (now - moment).total_seconds()
+    # A negative gap is a clock that moved backwards, not the future.
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m ago"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h ago"
+    if seconds < 7 * 86400:
+        return f"{int(seconds // 86400)}d ago"
+    return day_label(local_day(stamp), now.astimezone().date())
 
 
 def group_by_day(entries: list, today: date | None = None) -> list:

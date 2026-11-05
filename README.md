@@ -95,6 +95,9 @@ different database file, and `--no-browser` to stay in the terminal.
   and can be replayed with one click. History lists a send under the name of
   the request you saved rather than its URL, with the URL still on the row as
   a tooltip.
+- **The last good response, kept** — each saved request remembers the last 2xx
+  it returned, body and all, so you can read that body again without sending
+  the request a second time.
 
   The list is grouped into collapsible days — **Today**, **Yesterday**, then
   the date — using your machine's timezone, not the UTC the timestamps are
@@ -133,6 +136,34 @@ are a single flat level, which is what an API client of this size needs.
 Loading a saved request fills the builder and offers **Update** (rename, move
 folder, or overwrite with the current request) alongside **Save as new**. The
 duplicate button copies a request into the same folder as `… (copy)`.
+
+### The last successful response
+
+Each saved request keeps the last response it returned with a 2xx status —
+headers and body included — and the **Saved** list shows that status beside
+the request's name. Open the request and the response pane shows that body
+again; click the status on its own and only the pane changes, so you can read
+one request's last response without giving up the request you are editing. A
+kept body always says so above it, with how long ago it arrived, and it is
+never mistaken for something the server just sent.
+
+A request that has never returned a 2xx has no status beside it, and opening
+it says as much rather than leaving the previous request's body on screen.
+
+The rules are narrow on purpose:
+
+- **2xx only.** A 404 that came after it does not replace it, and neither does
+  a connection that never landed. The question being answered is "what did
+  this endpoint give me when it worked", which a failure cannot answer.
+- **One per saved request**, replaced each time it succeeds. The cost is
+  bounded by how many requests you have saved, not by how often you send them.
+- **Kept apart from history**, not a pointer into it. History holds the last
+  500 sends and can be cleared outright; a copy that an afternoon of traffic
+  could evict would not be worth having. Clearing history leaves these alone.
+  Deleting the saved request does take its response with it.
+- Only a send made **from a loaded saved request** is kept, the same link that
+  lets history show the request's name. A body up to 256 KB is stored, and a
+  longer one is marked as truncated.
 
 ### Drafts and the checkpoint
 

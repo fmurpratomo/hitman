@@ -1,7 +1,7 @@
 import pytest
 
 from hitman.core.models import KeyValue, Request, Response
-from hitman.core.store import HISTORY_LIMIT, STORED_BODY_LIMIT, Store
+from hitman.core.store import BACKFILLED_SUCCESS, HISTORY_LIMIT, STORED_BODY_LIMIT, Store
 
 
 @pytest.fixture
@@ -563,3 +563,233 @@ def test_a_single_unlinked_entry_reads_back_named_too(store):
     entry_id = store.add_history(make_request("http://x.test/me"), make_response())
     assert store.get_history(entry_id).label == "Get profile"
 
+
+
+# --- the response kept per saved request --------------------------------
+#
+# The point is to be able to read a successful body again without sending the
+# request a second time. That makes durability the whole feature: the copy has
+# to outlive the history trim and an explicit "clear history".
+
+
+def test_a_saved_request_starts_with_no_kept_response(store):
+    saved_id = store.save_request("Get profile", make_request())
+    assert store.get_request(saved_id).last_success is None
+    assert store.last_success(saved_id) is None
+
+
+def test_a_successful_send_is_kept_against_the_saved_request(store):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(), saved_id)
+
+    kept = store.last_success(saved_id)
+    assert kept.response.status == 200
+    assert kept.response.body == '{"ok": true}'
+    assert kept.response.headers == [("Content-Type", "application/json")]
+    assert kept.request.url == "http://localhost:3000/api"
+
+
+def test_the_summary_comes_back_with_the_saved_request(store):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(), saved_id)
+
+    summary = store.get_request(saved_id).last_success
+    assert (summary.status, summary.reason) == (200, "OK")
+    assert summary.size_bytes == 12
+    assert summary.elapsed_ms == 42.5
+
+
+def test_the_summary_comes_back_with_the_list_too(store):
+    """The sidebar renders from the list, so the badge has to be there."""
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(), saved_id)
+    listed = {item.id: item.last_success for item in store.list_requests()}
+    assert listed[saved_id].status == 200
+
+
+def test_a_failing_send_leaves_the_kept_response_alone(store):
+    """The last *successful* response, not the last one."""
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(body='{"good": true}'), saved_id)
+    store.add_history(
+        make_request(), make_response(status=500, reason="Server Error", body="boom"), saved_id
+    )
+    assert store.last_success(saved_id).response.body == '{"good": true}'
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        Response(engine="httpx", status=404, reason="Not Found"),
+        Response(engine="httpx", status=301, reason="Moved"),
+        Response(engine="curl", error="Connection refused", curl_exit_code=7),
+        Response(engine="httpx", status=500, reason="Server Error"),
+    ],
+)
+def test_only_a_2xx_is_worth_keeping(store, response):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), response, saved_id)
+    assert store.last_success(saved_id) is None
+
+
+def test_a_later_success_replaces_the_earlier_one(store):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(body="first"), saved_id)
+    store.add_history(make_request(), make_response(status=201, body="second"), saved_id)
+
+    kept = store.last_success(saved_id)
+    assert (kept.response.status, kept.response.body) == (201, "second")
+    # One row per saved request, however many times it is sent.
+    assert store._conn.execute("SELECT COUNT(*) FROM last_success").fetchone()[0] == 1
+
+
+def test_an_ad_hoc_send_is_kept_against_nothing(store):
+    store.add_history(make_request(), make_response())
+    assert store._conn.execute("SELECT COUNT(*) FROM last_success").fetchone()[0] == 0
+
+
+def test_the_kept_response_survives_clearing_history(store):
+    """The reason this is its own table rather than a pointer into history."""
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(), saved_id)
+    store.clear_history()
+
+    assert store.list_history() == []
+    assert store.last_success(saved_id).response.body == '{"ok": true}'
+    assert store.get_request(saved_id).last_success.status == 200
+
+
+def test_the_kept_response_survives_the_history_trim(store):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(body="the one I want"), saved_id)
+    for index in range(HISTORY_LIMIT + 5):
+        store.add_history(Request(url=f"http://x.test/{index}"), make_response())
+
+    assert store.last_success(saved_id).response.body == "the one I want"
+
+
+def test_a_kept_body_is_capped_and_says_so(store):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(
+        make_request(), make_response(body="x" * (STORED_BODY_LIMIT + 500)), saved_id
+    )
+
+    kept = store.last_success(saved_id)
+    assert len(kept.response.body) == STORED_BODY_LIMIT
+    assert kept.response.body_truncated is True
+
+
+def test_deleting_the_saved_request_drops_its_kept_response(store):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(), saved_id)
+    store.delete_request(saved_id)
+    assert store.last_success(saved_id) is None
+
+
+def test_forget_success_clears_it_without_touching_the_request(store):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(), saved_id)
+    store.forget_success(saved_id)
+
+    assert store.last_success(saved_id) is None
+    assert store.get_request(saved_id).name == "Get profile"
+
+
+def test_a_duplicate_starts_without_the_original_kept_response(store):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(), saved_id)
+    copy_id = store.duplicate_request(saved_id)
+    assert store.last_success(copy_id) is None
+
+
+def test_a_database_made_before_the_table_existed_gains_it(tmp_path):
+    """CREATE TABLE IF NOT EXISTS runs on every open, so an old file is fine."""
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        "CREATE TABLE saved_requests (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " name TEXT NOT NULL, request_json TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
+        " INSERT INTO saved_requests (name, request_json, created_at, updated_at)"
+        " VALUES ('Get profile', '{\"url\": \"http://x.test/me\"}', 'then', 'then');"
+    )
+    connection.commit()
+    connection.close()
+
+    store = Store(path)
+    try:
+        saved = store.list_requests()[0]
+        assert saved.last_success is None
+        store.add_history(make_request(), make_response(), saved.id)
+        assert store.last_success(saved.id).response.status == 200
+    finally:
+        store.close()
+
+
+# --- seeding from history on upgrade ------------------------------------
+
+
+def reopen(store):
+    """Close and open the same file, the way restarting the app does."""
+    path = store.path
+    store.close()
+    return Store(path)
+
+
+def test_history_already_holding_a_success_seeds_the_table(store):
+    """Nobody should have to re-send everything to get a first kept response."""
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(body="from before"), saved_id)
+    store._conn.execute("DELETE FROM last_success")
+    store._conn.execute("DELETE FROM settings WHERE key = ?", (BACKFILLED_SUCCESS,))
+    store._conn.commit()
+
+    upgraded = reopen(store)
+    try:
+        assert upgraded.last_success(saved_id).response.body == "from before"
+    finally:
+        upgraded.close()
+
+
+def test_the_seed_takes_the_newest_success_only(store):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(body="older"), saved_id)
+    store.add_history(make_request(), make_response(body="newer"), saved_id)
+    store.add_history(make_request(), make_response(status=500, body="failed"), saved_id)
+    store._conn.execute("DELETE FROM last_success")
+    store._conn.execute("DELETE FROM settings WHERE key = ?", (BACKFILLED_SUCCESS,))
+    store._conn.commit()
+
+    upgraded = reopen(store)
+    try:
+        assert upgraded.last_success(saved_id).response.body == "newer"
+        count = upgraded._conn.execute("SELECT COUNT(*) FROM last_success").fetchone()[0]
+        assert count == 1
+    finally:
+        upgraded.close()
+
+
+def test_the_seed_ignores_sends_with_no_saved_request(store):
+    store.add_history(make_request(), make_response())
+    store._conn.execute("DELETE FROM settings WHERE key = ?", (BACKFILLED_SUCCESS,))
+    store._conn.commit()
+
+    upgraded = reopen(store)
+    try:
+        assert upgraded._conn.execute("SELECT COUNT(*) FROM last_success").fetchone()[0] == 0
+    finally:
+        upgraded.close()
+
+
+def test_the_seed_runs_once_and_does_not_resurrect_a_deletion(store):
+    saved_id = store.save_request("Get profile", make_request())
+    store.add_history(make_request(), make_response(), saved_id)
+    store.forget_success(saved_id)
+
+    upgraded = reopen(store)
+    try:
+        assert upgraded.last_success(saved_id) is None
+    finally:
+        upgraded.close()

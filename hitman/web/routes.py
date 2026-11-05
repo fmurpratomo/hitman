@@ -46,9 +46,13 @@ def render(http_request: HttpRequest, template: str, context: dict) -> HTMLRespo
     store = http_request.app.state.store
     history = store.list_history(50)
     live = _live_run(http_request)
+    saved_groups = store.grouped_requests()
     full = {
         "curl_available": http_request.app.state.curl_available,
-        "saved_groups": store.grouped_requests(),
+        "saved_groups": saved_groups,
+        # Whether any saved request has a response kept against it, so the
+        # sidebar can explain the status badges only once there are some.
+        "any_kept": any(item.last_success for _, items in saved_groups for item in items),
         "folders": store.list_folders(),
         "history": history,
         "history_days": group_by_day(history),
@@ -213,14 +217,49 @@ def new_request(http_request: HttpRequest):
 
 @router.get("/requests/{request_id}", response_class=HTMLResponse)
 def load_request(request_id: int, http_request: HttpRequest):
-    saved = http_request.app.state.store.get_request(request_id)
+    store = http_request.app.state.store
+    saved = store.get_request(request_id)
     if saved is None:
         raise HTTPException(status_code=404, detail="Saved request not found")
     # editing, not request: loading gives back what you were doing.
     return render(
         http_request,
         "fragments/builder_with_sidebar.html",
-        {"req": saved.editing, "warnings": [], "current": saved},
+        {
+            "req": saved.editing,
+            "warnings": [],
+            "current": saved,
+            # Opening a saved request re-points the response pane at it: the
+            # body it last returned, or a note that it has never returned one.
+            # Either way the pane stops showing some other request's response.
+            "show_kept": True,
+            "last_success": store.last_success(request_id),
+        },
+    )
+
+
+@router.get("/requests/{request_id}/last-success", response_class=HTMLResponse)
+def load_last_success(request_id: int, http_request: HttpRequest):
+    """The response pane alone, showing the kept response.
+
+    Deliberately does not touch the builder: this is for reading a body you
+    already have, and it must not throw away the request you are in the middle
+    of editing to do it.
+    """
+    kept = http_request.app.state.store.last_success(request_id)
+    if kept is None:
+        raise HTTPException(status_code=404, detail="No successful response kept")
+    return render(
+        http_request,
+        "fragments/response.html",
+        {
+            "response": kept.response,
+            "pretty": pretty_lines(kept.response.body),
+            # Dates the body and names the request that produced it, so a
+            # response read back from storage is never taken for a fresh one.
+            "stored_at": kept.created_at,
+            "stored_request": kept.request,
+        },
     )
 
 

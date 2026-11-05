@@ -258,3 +258,24 @@ button[aria-busy="true"]::after {
   background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
   color: var(--text); font-size: 12px; }
 .bar.late:hover::after { left: auto; right: 0; }
+
+/* --- the response kept per saved request ----------------------------- */
+/* The status a saved request last returned, shown in its row. A .badge for
+   the colour, sized down to fit a list row. Deliberately not also an .icon:
+   that class clears the background, and it is declared after .badge.s2, so
+   the pill would come out grey. */
+.entry-row .kept-badge { flex: none; border: none; padding: 1px 7px;
+  font-size: 11px; line-height: 1.6; cursor: pointer; }
+.entry-row .kept-badge:hover { filter: brightness(1.35); }
+/* The age of the response is in the badge's tooltip and spelled out again
+   above the body itself. It is not in the row: the sidebar is narrow, and
+   anything added there is taken from the request's own name. */
+.hint { color: var(--muted); font-size: 11px; padding: 8px; line-height: 1.5; }
+/* Not .warnings: a kept response is not a problem, so it gets the neutral
+   panel treatment rather than the amber one. */
+.stored-note { background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; color: var(--text); }
+.stored-note .muted { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; }
+.stored-chip { color: var(--muted); border: 1px dashed var(--line);
+  border-radius: 999px; padding: 1px 8px; font-size: 11px; }
