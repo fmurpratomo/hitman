@@ -91,6 +91,9 @@ different database file, and `--no-browser` to stay in the terminal.
 - **Import curl** — paste anything from Chrome's "Copy as cURL" and it becomes
   an editable request.
 - **Copy as curl** — the reverse, so you can paste into a terminal or a ticket.
+- **Performance reports you can send on** — a finished load test exports as a
+  CSV for a spreadsheet, or as a printable page you save as a PDF, built
+  around JMeter's aggregate table.
 - **History and saved requests** — every send is recorded, including failures,
   and can be replayed with one click. History lists a send under the name of
   the request you saved rather than its URL, with the URL still on the row as
@@ -315,6 +318,43 @@ What to know when reading the numbers:
   are kept under **Recent runs**, as their summaries only.
 
 Only load-test servers you run or have permission to test.
+
+### Exporting a report
+
+A finished run offers three things, right under its status line and again
+whenever you reopen it from **Recent runs**:
+
+- **Export CSV** downloads the whole report as one file that Excel, Numbers
+  and Sheets open directly. It is written with a byte-order mark, so a URL or
+  an error message with an accent in it arrives intact rather than mangled.
+- **Export PDF** opens the printable report in a new tab and goes straight to
+  the print dialog, where you choose *Save as PDF*. There is no PDF engine in
+  Hitman: the browser already has one, and the page is written to print well
+  on A4 — white, column headings repeated on every page, and no table split
+  down the middle of a row.
+- **Open report** is the same page without the dialog, for reading or sending
+  on. It carries its own styling inline, so saving the HTML keeps it.
+
+Both exports are built around the **aggregate report**, which is JMeter's
+table column for column: a row per request label and then a TOTAL row, with
+samples, average, median, 90/95/99% lines, min, max, error %, throughput,
+received KB/sec and average bytes. Two details worth knowing when comparing it
+against JMeter's own:
+
+- **Throughput is samples over the whole run**, not over the span one label
+  happened to be busy, which is what makes the label rows add up to TOTAL.
+- **The TOTAL row's percentiles are measured over every sample**, never
+  averaged from the rows above — averaging percentiles gives a number that no
+  request experienced.
+
+The CSV holds the run's details, the aggregate table, the response codes, the
+errors and the per-second throughput, as sections one after another. Numbers
+are written as numbers — no units, no thousands separators, no percent signs —
+so sorting and charting in the spreadsheet work; the units are in the column
+headings.
+
+Runs recorded before this existed have no response sizes stored, so their byte
+columns are blank rather than zero.
 
 ## Not supported yet
 

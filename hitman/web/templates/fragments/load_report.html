@@ -1,4 +1,8 @@
 {% set token = token if token is defined else None %}
+{# Present once the run has been stored, which is what the exports are keyed
+   on. A run still in flight has no id yet and shows no export buttons: half a
+   test is not a report worth sending anyone. #}
+{% set run_id = run_id if run_id is defined else None %}
 {% macro ms(value) %}{% if value < 10 %}{{ "%.1f" | format(value) }}ms{% elif value < 10000 %}{{ value | round | int }}ms{% else %}{{ "%.1f" | format(value / 1000) }}s{% endif %}{% endmacro %}
 {% macro rate(value) %}{% if value < 100 %}{{ "%.1f" | format(value) }}{% else %}{{ "{:,}".format(value | round | int) }}{% endif %}{% endmacro %}
 
@@ -33,6 +37,25 @@
     {% if result.state == 'stopping' %}&middot; waiting for requests in flight{% endif %}
   </span>
 </div>
+
+{% if run_id %}
+<div class="report-actions">
+  <a class="linkbutton" href="/performance/runs/{{ run_id }}/export.csv"
+     title="Download the whole report as a CSV, which Excel and Numbers open directly">
+    Export CSV
+  </a>
+  <a class="linkbutton" href="/performance/runs/{{ run_id }}/report?print=1"
+     target="_blank" rel="noopener"
+     title="Open the printable report in a new tab and go straight to Print, where you choose Save as PDF">
+    Export PDF
+  </a>
+  <a class="linkbutton ghost" href="/performance/runs/{{ run_id }}/report"
+     target="_blank" rel="noopener"
+     title="Open the full report in a new tab">
+    Open report
+  </a>
+</div>
+{% endif %}
 
 <div class="tiles">
   <div class="tile">
@@ -149,6 +172,11 @@
     {% endfor %}
   </tbody>
 </table>
+{% endif %}
+
+{% if result.measured_bytes %}
+<p class="ms">{{ "{:,}".format((result.bytes_received / 1024) | round | int) }} KB received
+  &middot; {{ "%.1f" | format(result.kb_per_s) }} KB/sec</p>
 {% endif %}
 
 {% if result.errors %}

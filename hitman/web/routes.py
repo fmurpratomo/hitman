@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from fastapi import Request as HttpRequest
@@ -37,6 +38,7 @@ from hitman.core.variables import substitute
 from hitman.web.bodyview import pretty_lines
 from hitman.web.dates import group_by_day
 from hitman.web.forms import load_test_from_form, request_from_form, scenario_from_form
+from hitman.web.report import aggregate, filename, report_csv, status_rows, summary_pairs
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -649,10 +651,16 @@ def _start_load(http_request: HttpRequest, test: LoadTest, load_test_id: int | N
         iteration = request_iteration(saved.name, outcome.request)
         target = f"{saved.request.method} · {saved.name}"
 
+    # Made before the callback that fills it in: the exports are offered by
+    # run id, and the final frame of a live run should already carry one so
+    # that finishing a test and exporting it is not two separate journeys.
+    token = uuid.uuid4().hex[:12]
+    stored_ids = http_request.app.state.load_run_ids
+
     def record(run: LoadRun) -> None:
         # Runs on the load test's own thread, after the last user has stopped.
         try:
-            store.add_load_run(load_test_id, run.snapshot())
+            stored_ids[token] = store.add_load_run(load_test_id, run.snapshot())
         except Exception as exc:  # noqa: BLE001 - the numbers on screen are what matter
             log.warning("Could not write performance run: %s", exc)
             run.notes.append(f"Run not saved: {exc}")
@@ -667,9 +675,9 @@ def _start_load(http_request: HttpRequest, test: LoadTest, load_test_id: int | N
         on_finish=record,
     )
     # Finished runs have been stored; their live entries are no longer needed.
-    for token in [token for token, item in live.items() if item.done]:
-        del live[token]
-    token = uuid.uuid4().hex[:12]
+    for stale in [key for key, item in live.items() if item.done]:
+        del live[stale]
+        stored_ids.pop(stale, None)
     live[token] = run
     run.start()
     return render(
@@ -691,7 +699,52 @@ def load_load_run(run_id: int, http_request: HttpRequest):
     run = http_request.app.state.store.get_load_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    return render(http_request, "fragments/load_report.html", {"result": run.result})
+    return render(
+        http_request, "fragments/load_report.html", {"result": run.result, "run_id": run_id}
+    )
+
+
+@router.get("/performance/runs/{run_id}/export.csv")
+def export_load_run_csv(run_id: int, http_request: HttpRequest):
+    """The whole report as a CSV a spreadsheet opens.
+
+    utf-8-sig, not utf-8: without the byte-order mark Excel reads the file as
+    the system's legacy encoding and mangles every non-ASCII character in a
+    URL or an error message.
+    """
+    run = http_request.app.state.store.get_load_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    name = filename(run.result, "csv")
+    return BareResponse(
+        content=report_csv(run.result).encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.get("/performance/runs/{run_id}/report", response_class=HTMLResponse)
+def load_run_report(run_id: int, http_request: HttpRequest):
+    """The printable report, opened in its own tab and saved as a PDF from there.
+
+    A whole page rather than a fragment, so it is rendered directly: it wants
+    none of the sidebar, history and environment context render() assembles.
+    """
+    run = http_request.app.state.store.get_load_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    generated = datetime.now().astimezone()
+    return http_request.app.state.templates.TemplateResponse(
+        http_request,
+        "report_print.html",
+        {
+            "result": run.result,
+            "rows": aggregate(run.result),
+            "summary": summary_pairs(run.result, generated),
+            "codes": status_rows(run.result),
+            "generated": generated.strftime("%Y-%m-%d %H:%M:%S %Z").strip(),
+        },
+    )
 
 
 @router.delete("/performance/runs", response_class=HTMLResponse)
@@ -708,11 +761,16 @@ async def live_load_report(token: str, http_request: HttpRequest):
         raise HTTPException(status_code=404, detail="That run is no longer live")
     if run.done:
         # The final frame brings the sidebar with it, so the stored run
-        # appears under Recent runs.
+        # appears under Recent runs, and the run id with it, so the exports
+        # are there without having to go and find the run again.
         return render(
             http_request,
             "fragments/load_report_with_sidebar.html",
-            {"result": run.snapshot(), "token": token},
+            {
+                "result": run.snapshot(),
+                "token": token,
+                "run_id": http_request.app.state.load_run_ids.get(token),
+            },
         )
     return render(
         http_request, "fragments/load_report.html", {"result": run.snapshot(), "token": token}

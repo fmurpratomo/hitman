@@ -279,3 +279,14 @@ button[aria-busy="true"]::after {
   font-size: 12px; }
 .stored-chip { color: var(--muted); border: 1px dashed var(--line);
   border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+
+/* --- exporting a performance report ---------------------------------- */
+/* Links, not buttons: these leave the page — one downloads a file, the others
+   open a tab — and app.js's swap layer only drives [data-url] elements. */
+.report-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+.linkbutton { display: inline-block; text-decoration: none; font-size: 13px;
+  color: var(--text); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 12px; }
+.linkbutton:hover { border-color: var(--accent); color: var(--accent); }
+.linkbutton.ghost { background: none; color: var(--muted); }
+.linkbutton.ghost:hover { color: var(--accent); }

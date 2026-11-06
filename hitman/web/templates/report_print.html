@@ -1,0 +1,272 @@
+<!doctype html>
+{#
+  A whole page, not a fragment: it opens in its own tab and is printed from
+  there, which is how it becomes a PDF. Everything it needs is inline, so the
+  file still reads correctly if it is saved or mailed on its own.
+
+  Light on white throughout, whatever the app's theme: this is printed, and a
+  dark page either eats a cartridge or arrives with its backgrounds dropped.
+#}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ result.name or 'Performance report' }} — Hitman</title>
+<style>
+  :root {
+    --ink: #1a1d21; --muted: #5c6670; --line: #d7dce2; --panel: #f4f6f8;
+    --ok: #1a7f37; --bad: #b42318; --warn: #9a6700; --accent: #2a5db0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; background: #fff; color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .sheet { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  h2 { font-size: 15px; margin: 26px 0 8px; padding-bottom: 5px;
+    border-bottom: 1px solid var(--line); letter-spacing: .02em; }
+  .sub { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
+  .muted { color: var(--muted); }
+  .bad { color: var(--bad); }
+  .ok { color: var(--ok); }
+
+  /* The one control on the page, and the only thing that does not print. */
+  .toolbar { display: flex; gap: 8px; justify-content: flex-end; margin-bottom: 10px; }
+  .toolbar button { font: inherit; cursor: pointer; padding: 7px 14px; border-radius: 6px;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+
+  /* Thirteen columns do not fit a narrow window. On screen the table scrolls
+     inside this rather than being clipped; in print it is shrunk to fit,
+     because a sheet of paper cannot be scrolled sideways. */
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right;
+    white-space: nowrap; }
+  th { background: var(--panel); font-weight: 600; color: var(--muted);
+    border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; white-space: normal; }
+  tr.total td { font-weight: 700; border-top: 2px solid var(--ink); background: var(--panel); }
+
+  /* The run's own details, two columns of label/value. */
+  .facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 28px; }
+  .facts div { display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+  .facts dt, .facts span.k { color: var(--muted); }
+  .facts span.v { font-weight: 600; text-align: right; }
+
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+    margin: 14px 0 4px; }
+  .tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+    background: var(--panel); }
+  .tile .k { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .06em; }
+  .tile .v { display: block; font-size: 20px; font-weight: 700; margin-top: 2px; }
+  .tile .v small { font-size: 12px; font-weight: 500; color: var(--muted); }
+
+  /* Bars drawn as boxes rather than an image, so the page stays one file. */
+  .chart { display: grid; grid-template-columns: 46px 1fr; gap: 6px; align-items: end;
+    height: 150px; margin-top: 10px; }
+  .chart-y { display: flex; flex-direction: column; justify-content: space-between;
+    height: 100%; font-size: 10px; color: var(--muted); text-align: right; }
+  .plot { display: flex; align-items: flex-end; gap: 1px; height: 100%;
+    border-left: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding-left: 2px; }
+  .bar { flex: 1; display: flex; flex-direction: column-reverse; min-width: 2px; height: 100%; }
+  .seg { display: block; width: 100%; }
+  .seg.ok { background: #4c8dff; }
+  .seg.bad { background: #e5533d; }
+  .axis { display: flex; justify-content: space-between; font-size: 10px;
+    color: var(--muted); margin: 2px 0 0 52px; }
+  .legend { display: flex; gap: 14px; font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    margin-right: 4px; vertical-align: -1px; }
+  .legend i.ok { background: #4c8dff; }
+  .legend i.bad { background: #e5533d; }
+
+  .codes { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 12.5px; }
+  .code { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
+  .note { background: #fff8e1; border: 1px solid #e0c87a; border-radius: 6px;
+    padding: 8px 10px; margin: 0 0 10px; font-size: 12.5px; }
+  footer { margin-top: 28px; padding-top: 10px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 11px; }
+
+  @page { size: A4; margin: 13mm; }
+  @media print {
+    body { padding: 0; font-size: 10.5px; }
+    .toolbar { display: none; }
+    /* Without this the bars and the shaded header rows print as blank paper. */
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    h1 { font-size: 18px; }
+    h2 { font-size: 13px; margin-top: 18px; break-after: avoid; page-break-after: avoid; }
+    tr, .tile, .chart { break-inside: avoid; page-break-inside: avoid; }
+    /* Repeat the column headings when a long table runs over a page. */
+    thead { display: table-header-group; }
+    /* Shrink to fit the sheet: thirteen columns at screen size run off the
+       right-hand edge, and headings that wrap buy back the most width. */
+    .scroll { overflow: visible; }
+    table { font-size: 9px; }
+    th, td { padding: 3px 4px; }
+    th { white-space: normal; }
+    .facts div { font-size: 10px; padding: 3px 0; }
+    .tile .v { font-size: 16px; }
+    .chart { height: 120px; }
+  }
+</style>
+</head>
+<body>
+{% macro ms(value) %}{% if value < 10 %}{{ "%.1f" | format(value) }}{% elif value < 10000 %}{{ value | round | int }}{% else %}{{ "{:,}".format(value | round | int) }}{% endif %}{% endmacro %}
+{% macro num(value) %}{% if value < 100 %}{{ "%.1f" | format(value) }}{% else %}{{ "{:,}".format(value | round | int) }}{% endif %}{% endmacro %}
+
+<div class="sheet">
+  <div class="toolbar">
+    <button type="button" id="print">Save as PDF / Print</button>
+  </div>
+
+  <h1>{{ result.name or 'Performance report' }}</h1>
+  <p class="sub">{{ result.target }} &middot; {{ result.users }} users &middot;
+    {{ "%.1f" | format(result.elapsed_ms / 1000) }}s &middot; generated {{ generated }}</p>
+
+  {% for note in result.notes %}
+  <p class="note">{{ note }}</p>
+  {% endfor %}
+
+  <div class="tiles">
+    <div class="tile">
+      <span class="k">Samples</span>
+      <span class="v">{{ "{:,}".format(result.requests) }}</span>
+    </div>
+    <div class="tile">
+      <span class="k">Throughput</span>
+      <span class="v">{{ num(result.rps) }} <small>req/s</small></span>
+    </div>
+    <div class="tile">
+      <span class="k">Error rate</span>
+      <span class="v{% if result.failed %} bad{% endif %}">{{ "%.2f" | format(result.failed_pct) }}%</span>
+    </div>
+    <div class="tile">
+      <span class="k">95% line</span>
+      <span class="v">{{ ms(result.latency.p95) }} <small>ms</small></span>
+    </div>
+  </div>
+
+  <h2>Run</h2>
+  <div class="facts">
+    {% for key, value in summary %}
+    <div><span class="k">{{ key }}</span> <span class="v">{{ value }}</span></div>
+    {% endfor %}
+  </div>
+
+  <h2>Aggregate report</h2>
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Label</th><th># Samples</th><th>Average</th><th>Median</th>
+        <th>90% Line</th><th>95% Line</th><th>99% Line</th><th>Min</th><th>Max</th>
+        <th>Error %</th><th>Throughput</th><th>Received KB/sec</th><th>Avg. Bytes</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr{% if row.is_total %} class="total"{% endif %}>
+        <td>{{ row.label }}</td>
+        <td>{{ "{:,}".format(row.samples) }}</td>
+        <td>{{ ms(row.mean) }}</td>
+        <td>{{ ms(row.median) }}</td>
+        <td>{{ ms(row.p90) }}</td>
+        <td>{{ ms(row.p95) }}</td>
+        <td>{{ ms(row.p99) }}</td>
+        <td>{{ ms(row.min) }}</td>
+        <td>{{ ms(row.max) }}</td>
+        <td{% if row.error_pct %} class="bad"{% endif %}>{{ "%.2f" | format(row.error_pct) }}%</td>
+        <td>{{ num(row.throughput) }}</td>
+        <td>{% if row.kb_per_s is none %}&ndash;{% else %}{{ num(row.kb_per_s) }}{% endif %}</td>
+        <td>{% if row.avg_bytes is none %}&ndash;{% else %}{{ "{:,}".format(row.avg_bytes | round | int) }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="sub" style="margin-top:6px">Times in milliseconds. Throughput is samples over the
+    whole run.{% if not result.measured_bytes %} Response sizes were not recorded for this run,
+    so the byte columns are blank.{% endif %}</p>
+
+  {% if result.timeline %}
+  {% set peak = result.timeline | map(attribute='rps') | max %}
+  {% set ceiling = nice_ceiling(peak) %}
+  {% set span = result.timeline[-1].start_s + result.timeline[-1].width_s %}
+  <h2>Throughput over time</h2>
+  <div class="chart">
+    <div class="chart-y">
+      <span>{{ num(ceiling) }}</span><span>{{ num(ceiling / 2) }}</span><span>0</span>
+    </div>
+    <div class="plot">
+      {% for slice in result.timeline %}
+      <div class="bar" title="{{ slice.start_s }}–{{ slice.start_s + slice.width_s }}s · {{ num(slice.rps) }} req/s">
+        {% if slice.requests - slice.failed %}<span class="seg ok" style="height: {{ 100 * (slice.rps - slice.failed_rps) / ceiling }}%"></span>{% endif %}
+        {% if slice.failed %}<span class="seg bad" style="height: {{ 100 * slice.failed_rps / ceiling }}%"></span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="axis"><span>0s</span><span>{{ span }}s</span></div>
+  <div class="legend"><span><i class="ok"></i>Succeeded</span><span><i class="bad"></i>Failed</span></div>
+  {% endif %}
+
+  <h2>Response codes</h2>
+  {% if codes %}
+  <div class="codes">
+    {% for code, count, share in codes %}
+    <span class="code"><b{% if code == 'ERR' or code[0] in '45' %} class="bad"{% endif %}>{{ code }}</b>
+      {{ "{:,}".format(count) }} <span class="muted">({{ "%.2f" | format(share) }}%)</span></span>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No responses.</p>
+  {% endif %}
+
+  {% if result.errors %}
+  <h2>Errors</h2>
+  <table>
+    <thead><tr><th>Message</th><th>Count</th></tr></thead>
+    <tbody>
+      {% for message, count in result.errors %}
+      <tr><td>{{ message }}</td><td>{{ "{:,}".format(count) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if result.timeline %}
+  <h2>Throughput detail</h2>
+  <table>
+    <thead>
+      <tr><th>Seconds</th><th>Samples</th><th>Failed</th><th>Throughput</th><th>Average</th></tr>
+    </thead>
+    <tbody>
+      {% for slice in result.timeline %}
+      <tr>
+        <td>{{ slice.start_s }}&ndash;{{ slice.start_s + slice.width_s }}</td>
+        <td>{{ "{:,}".format(slice.requests) }}</td>
+        <td{% if slice.failed %} class="bad"{% endif %}>{{ "{:,}".format(slice.failed) }}</td>
+        <td>{{ num(slice.rps) }}</td>
+        <td>{% if slice.requests %}{{ ms(slice.mean_ms) }}{% else %}&ndash;{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <footer>Generated by Hitman on {{ generated }}. Times in milliseconds; percentiles are
+    within 1% of exact.</footer>
+</div>
+
+<script>
+  document.getElementById('print').addEventListener('click', () => window.print());
+  // ?print=1 is how the app's own PDF button links here: the tab opens and
+  // goes straight to the print dialog, so saving a PDF is one click.
+  if (new URLSearchParams(location.search).get('print') === '1') {
+    window.addEventListener('load', () => window.print());
+  }
+</script>
+</body>
+</html>

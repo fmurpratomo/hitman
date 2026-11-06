@@ -335,3 +335,57 @@ def test_a_load_test_round_trips_and_rejects_unknown_values():
     assert LoadTest.from_dict(test.to_dict()) == test
     odd = LoadTest.from_dict({"target_kind": "mystery", "stop_after": "forever"})
     assert (odd.target_kind, odd.stop_after) == ("request", "seconds")
+
+
+# --- response sizes -----------------------------------------------------
+#
+# Counted so a report can state throughput in KB/sec and the average size of a
+# response, which is what an aggregate report carries alongside the timings.
+
+
+class SizedEngine(FakeEngine):
+    """Answers with a body of a set size."""
+
+    def __init__(self, size=512):
+        super().__init__()
+        self.size = size
+
+    def send(self, request):
+        self.sent.append(request)
+        return Response(
+            engine="fake", status=200, body="x" * self.size, size_bytes=self.size, elapsed_ms=5.0
+        )
+
+
+def test_response_bytes_are_totalled_for_the_run_and_per_label():
+    result = run_to_end(by_iterations(8, users=2), GET, new_engine=lambda: SizedEngine(512))
+    assert result.bytes_received == 8 * 512
+    assert result.labels[0].bytes_received == 8 * 512
+    assert result.measured_bytes is True
+
+
+def test_kb_per_second_is_bytes_over_the_run():
+    result = LoadResult(elapsed_ms=2000.0, requests=10, bytes_received=20480)
+    assert result.kb_per_s == 10.0
+
+
+def test_a_run_with_no_length_reports_no_rate():
+    assert LoadResult(elapsed_ms=0.0, bytes_received=1024).kb_per_s == 0.0
+
+
+def test_a_run_that_recorded_nothing_says_sizes_were_not_measured():
+    """A stored run from before sizes existed must not read as zero bytes."""
+    assert LoadResult(requests=500, bytes_received=0).measured_bytes is False
+
+
+def test_sizes_survive_being_stored_and_read_back():
+    result = LoadResult(requests=4, bytes_received=4096, labels=[])
+    assert LoadResult.from_dict(result.to_dict()).bytes_received == 4096
+
+
+def test_a_result_stored_before_sizes_existed_still_reads_back():
+    """from_dict fills the field in, rather than raising on an old row."""
+    old = {"name": "t", "requests": 7, "labels": [{"label": "Ping", "requests": 7}]}
+    result = LoadResult.from_dict(old)
+    assert result.bytes_received == 0
+    assert result.labels[0].bytes_received == 0

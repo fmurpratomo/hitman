@@ -171,17 +171,21 @@ class Latency:
 
 
 class _Tally:
-    __slots__ = ("count", "failed", "latency")
+    __slots__ = ("bytes", "count", "failed", "latency")
 
     def __init__(self) -> None:
         self.count = 0
         self.failed = 0
         self.latency = Latency()
+        self.bytes = 0
 
-    def add(self, ms: float, failed: bool) -> None:
+    def add(self, ms: float, failed: bool, size_bytes: int = 0) -> None:
         self.count += 1
         self.failed += int(failed)
         self.latency.add(ms)
+        # Iterations pass nothing: a scenario pass has no one size of its own,
+        # and its steps are each counted where they happen.
+        self.bytes += size_bytes
 
 
 def is_failure(response: Response) -> bool:
@@ -200,6 +204,10 @@ class LabelStats:
     requests: int = 0
     failed: int = 0
     latency: LatencySummary = field(default_factory=LatencySummary)
+    # Response bytes, for the KB/sec and average-size columns an aggregate
+    # report carries. Zero on a run stored before this was measured, which the
+    # report shows as "not measured" rather than as zero throughput.
+    bytes_received: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -211,6 +219,7 @@ class LabelStats:
             requests=data.get("requests", 0),
             failed=data.get("failed", 0),
             latency=LatencySummary.from_dict(data.get("latency") or {}),
+            bytes_received=data.get("bytes_received", 0),
         )
 
 
@@ -261,6 +270,7 @@ class LoadResult:
     requests: int = 0
     failed: int = 0
     latency: LatencySummary = field(default_factory=LatencySummary)
+    bytes_received: int = 0
     statuses: list[tuple[str, int]] = field(default_factory=list)
     errors: list[tuple[str, int]] = field(default_factory=list)
     labels: list[LabelStats] = field(default_factory=list)
@@ -282,6 +292,23 @@ class LoadResult:
     @property
     def failed_pct(self) -> float:
         return 100 * self.failed / self.requests if self.requests else 0.0
+
+    @property
+    def kb_per_s(self) -> float:
+        """Response bytes received per second, as an aggregate report states it."""
+        seconds = self.elapsed_ms / 1000
+        return self.bytes_received / 1024 / seconds if seconds > 0 else 0.0
+
+    @property
+    def measured_bytes(self) -> bool:
+        """Whether this run recorded response sizes at all.
+
+        Runs stored before sizes were measured read back as zero, and a report
+        must not present that as a server returning nothing. A real run of
+        bodyless responses reads the same way; saying "not measured" of it is
+        the harmless half of the ambiguity.
+        """
+        return self.bytes_received > 0
 
     @property
     def progress(self) -> float:
@@ -312,6 +339,7 @@ class LoadResult:
             requests=data.get("requests", 0),
             failed=data.get("failed", 0),
             latency=LatencySummary.from_dict(data.get("latency") or {}),
+            bytes_received=data.get("bytes_received", 0),
             # JSON has no tuples; restore them so a result compares equal.
             statuses=[tuple(pair) for pair in data.get("statuses") or []],
             errors=[tuple(pair) for pair in data.get("errors") or []],
@@ -509,8 +537,9 @@ class LoadRun:
 
             for label, response in outcome.sends:
                 failed = is_failure(response)
-                self._requests.add(response.elapsed_ms, failed)
-                self._labels.setdefault(label, _Tally()).add(response.elapsed_ms, failed)
+                size = response.size_bytes or 0
+                self._requests.add(response.elapsed_ms, failed, size)
+                self._labels.setdefault(label, _Tally()).add(response.elapsed_ms, failed, size)
                 key = "ERR" if response.status is None else str(response.status)
                 self._statuses[key] = self._statuses.get(key, 0) + 1
                 slot[0] += 1
@@ -551,11 +580,14 @@ class LoadRun:
                 requests=self._requests.count,
                 failed=self._requests.failed,
                 latency=self._requests.latency.summary(),
+                bytes_received=self._requests.bytes,
                 # Numeric codes in order, transport failures last.
                 statuses=sorted(self._statuses.items(), key=lambda pair: (pair[0] == "ERR", pair[0])),
                 errors=sorted(self._errors.items(), key=lambda pair: -pair[1]),
                 labels=[
-                    LabelStats(label, tally.count, tally.failed, tally.latency.summary())
+                    LabelStats(
+                        label, tally.count, tally.failed, tally.latency.summary(), tally.bytes
+                    )
                     for label, tally in self._labels.items()
                 ],
                 iterations=self._iterations.count,

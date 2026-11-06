@@ -46,6 +46,9 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.state.curl_available = curl_available()
     # Performance tests in flight, by token. See the performance routes.
     app.state.live_loads = {}
+    # Where each of those runs was stored once it finished, by the same token,
+    # so its report can offer its exports without looking the run up again.
+    app.state.load_run_ids = {}
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
     @app.middleware("http")
